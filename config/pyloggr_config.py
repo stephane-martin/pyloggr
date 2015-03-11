@@ -134,7 +134,9 @@ REDIS_CONFIG = {
     'rescue_queue_name': 'pyloggr.rescue_queue',
     'syslog_clients': 'pyloggr.syslog_clients',
     'syslog_status': 'pyloggr.syslog_status',
-    'try_spawn_redis': True
+    'try_spawn_redis': True,
+    'path': '/usr/local/bin/redis-server',
+    'config_file': '/usr/local/etc/redis.conf'
 }
 
 

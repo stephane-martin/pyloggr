@@ -306,9 +306,8 @@ class ConfigParser(object):
         except ParseException as ex:
             raise_from(ValueError("Syntax Error in filters configuration"), ex)
 
-    def parse_config_file(self, directory):
-        fname = join(directory, "filters")
-        with open(fname, 'rb') as handle:
+    def parse_config_file(self, filter_config_filename):
+        with open(filter_config_filename, 'rb') as handle:
             s = handle.read()
         s = to_unicode(s)
         return self.parse_string(s)

@@ -1,6 +1,8 @@
 # encoding: utf-8
 __author__ = 'stef'
 
+from os.path import join
+
 from .filters_config import ConfigParser
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
@@ -18,8 +20,10 @@ class Filters(object):
     }
 
     def __init__(self, config_directory):
-        self.conf = ConfigParser().parse_config_file(config_directory)
-        self._filters = dict([(name, module(config_directory)) for (name, module) in self.filters_modules.items()])
+        self.conf = ConfigParser().parse_config_file(join(config_directory, 'filters.conf'))
+        self._filters = dict(
+            [(name, module(config_directory)) for (name, module) in self.filters_modules.items()]
+        )
 
     def open(self):
         for module in self._filters.values():

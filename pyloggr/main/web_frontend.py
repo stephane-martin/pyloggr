@@ -5,22 +5,20 @@ __author__ = 'stef'
 # todo: metrics
 
 import logging
-from os.path import dirname, abspath, join
 
+from pkg_resources import resource_filename
 from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
 from tornado.gen import coroutine
 from future.builtins import bytes
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, PackageLoader
 
 from ..rabbitmq.notifications_consumer import NotificationsConsumer
 from ..config import RABBITMQ_NOTIFICATIONS_CONFIG, COOKIE_SECRET
 from ..cache import cache
 
-
-root = abspath(dirname(dirname(__file__)))
 logger = logging.getLogger(__name__)
 
 
@@ -93,13 +91,13 @@ class PyloggrApplication(Application):
         settings = {
             'autoreload': False,
             'debug': True,
-            'static_path': root + '/static',
+            'static_path': resource_filename('pyloggr', '/static'),
             'static_url_prefix': url_prefix + '/static/',
             'cookie_secret': COOKIE_SECRET
         }
 
-        templater_loader = FileSystemLoader(searchpath=join(root, 'templates'))
-        template_env = Environment(loader=templater_loader)
+        template_loader = PackageLoader('pyloggr', 'templates')
+        template_env = Environment(loader=template_loader)
         template_env.globals['reverse'] = self.reverse_url
         template_env.globals['prefix'] = url_prefix
         self.templates = {

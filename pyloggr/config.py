@@ -4,9 +4,7 @@ __author__ = 'stef'
 """
 Small hack to be able to import configuration from an environment variable.
 
-PYLOGGR_CONFIG_DIR envvar can be defined to some directory that actually contains 'pyloggr_config.py'.
-If PYLOGGR_CONFIG_DIR is not defined, 'pyloggr_config.py' will be read from ./config, relative to package install
-directory.
+PYLOGGR_CONFIG_DIR envvar must be defined to some directory that actually contains 'pyloggr_config.py'.
 """
 
 import os
@@ -25,6 +23,10 @@ else:
     CONFIG_DIR = join(base_dir, 'config')
 
 sys.path.insert(0, CONFIG_DIR)
-from pyloggr_config import *
-sys.path.pop(0)
+try:
+    from pyloggr_config import *
+except ImportError:
+    raise RuntimeError("PYLOGGR_CONFIG_DIR environment variable is not defined. Can't find configuration.")
+finally:
+    sys.path.pop(0)
 

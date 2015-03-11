@@ -15,9 +15,11 @@ RELATIVE_GEOLITE_FILENAME = 'GeoLite2-City.mmdb'
 
 logger = logging.getLogger(__name__)
 
+
 class GeoIPEngine(object):
     def __init__(self, directory):
-        fname = join(directory, RELATIVE_GEOLITE_FILENAME)
+        geoip_conf_dir = join(directory, 'geoip')
+        fname = join(geoip_conf_dir, RELATIVE_GEOLITE_FILENAME)
         self.fname = fname
         self.reader = None
 

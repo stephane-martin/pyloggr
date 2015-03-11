@@ -47,10 +47,10 @@ class PatternNode(object):
 
 
 class GrokEngine(object):
-    def __init__(self, patterns_dir):
+    def __init__(self, config_dir):
         self._raw_patterns = dict()
         self._pattern_nodes = dict()
-        self._patterns_dir = patterns_dir
+        self._patterns_dir = join(config_dir, 'patterns')
         self._read_pattern_files()
         self._build_pattern_tree()
         self._solve_dependencies()

@@ -2,8 +2,25 @@
 # -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
+from itertools import chain
 import os
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
+
+
+def list_subdir(dirname):
+    l = [[os.path.join(root, f) for f in files] for root, dirs, files in os.walk(dirname)]
+    l = list(chain.from_iterable(l))
+    l = [f for f in l if
+         f.endswith('.py') or
+         f.endswith('.conf') or
+         f.endswith('.patterns') or
+         f.endswith('.txt')
+         ]
+    l = [f for f in l if not f.endswith('.mmdb')]
+    l = [f for f in l if not f.endswith('secrets.py')]
+    return l
+
+data_files = list_subdir('config')
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -35,18 +52,15 @@ setup(
     author_email='stephane.martin_github@vesperal.eu',
     url='https://github.com/stephane-martin/pyloggr',
     packages=find_packages(exclude=['tests']),
+    # todo: are you sure about setup_requires ?
     setup_requires=[
-        "setuptools_git",
-        'setuptools',
-        'twine',
-        'wheel',
-        'Mock'
+        'setuptools_git', 'setuptools', 'twine', 'wheel', 'Mock'
     ],
-    include_package_data = True,
+    include_package_data=True,
     install_requires=requirements,
     license="GPLv3+",
     zip_safe=False,
-    keywords='syslog rabbitmq tornado postgresql elasticsearch logmanagement',
+    keywords='syslog rabbitmq tornado postgresql elasticsearch logmanagement python',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
@@ -58,17 +72,16 @@ setup(
         'Environment :: Web Environment',
         'Operating System :: POSIX :: Linux',
         'Topic :: Internet :: Log Analysis',
-
-
     ],
     entry_points={
         'console_scripts': [
-            'pyloggr_parser = scripts.pyloggr_parser:main',
-            'pyloggr_shipper_pgsql = scripts.pyloggr_shipper_pgsql:main',
-            'pyloggr_syslog_server = scripts.pyloggr_syslog_server:main',
-            'pyloggr_web_frontend = scripts.pyloggr_web_frontend.py'
+            'pyloggr_parser = pyloggr.scripts.pyloggr_parser:main',
+            'pyloggr_shipper_pgsql = pyloggr.scripts.pyloggr_shipper_pgsql:main',
+            'pyloggr_syslog_server = pyloggr.scripts.pyloggr_syslog_server:main',
+            'pyloggr_web_frontend = pyloggr.scripts.pyloggr_web_frontend:main'
         ]
     },
+    data_files=data_files,
     test_suite='tests',
     tests_require=test_requirements
 )

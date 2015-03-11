@@ -6,6 +6,7 @@ import logging
 import logging.config
 import time
 import signal
+from os.path import join
 
 from tornado.ioloop import IOLoop
 from tornado.gen import coroutine

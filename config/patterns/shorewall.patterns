@@ -1,0 +1,2 @@
+SHOREWALL   \[%{NONNEGINT}\.%{NONNEGINT}\] Shorewall:%{DATA}:%{WORD:action}:IN=(%{INTERFACE:in_interface})? OUT=(%{INTERFACE:out_interface})? MAC=(%{UFWMAC:mac})? SRC=(%{IP:source_ip})? DST=(%{IP:destination_ip})? %{DATA} PROTO=(%{PROTOCOL:protocol})? SPT=(%{INT:source_port})? DPT=(%{INT:destination_port})? %{GREEDYDATA}
+

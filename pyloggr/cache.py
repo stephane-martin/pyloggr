@@ -102,8 +102,12 @@ class SyslogList(object):
         res = [self[task_id] for task_id in self.keys()]
         return iter(res)
 
+
 def launch_redis():
-    pass
+    Subprocess(
+        args=[REDIS_CONFIG['path'], REDIS_CONFIG['config_file']],
+        close_fds=True
+    )
 
 
 def connect_to_redis():
