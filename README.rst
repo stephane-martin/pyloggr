@@ -1,6 +1,9 @@
-========
+=======
+Pyloggr
+=======
+
 Overview
-========
+--------
 
 pyloggr is a set of tools to
 - centralize logs

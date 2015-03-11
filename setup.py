@@ -81,7 +81,7 @@ setup(
             'pyloggr_web_frontend = pyloggr.scripts.pyloggr_web_frontend:main'
         ]
     },
-    data_files=data_files,
+    data_files=[('etc/pyloggr', data_files)],
     test_suite='tests',
     tests_require=test_requirements
 )
