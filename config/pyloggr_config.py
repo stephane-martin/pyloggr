@@ -1,8 +1,15 @@
 # encoding: utf-8
 __author__ = 'stef'
 
+import os
 from ssl import PROTOCOL_SSLv23, CERT_NONE
-from secrets import RABBITMQ_PASSWORD, HMAC_KEY, PGSQL_PASSWORD, COOKIE_SECRET
+
+try:
+    from secrets import RABBITMQ_PASSWORD, HMAC_KEY, PGSQL_PASSWORD, COOKIE_SECRET
+except ImportError:
+    if os.environ.get('READTHEDOCS', None) != 'True':
+        raise
+
 
 MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = 10
 
