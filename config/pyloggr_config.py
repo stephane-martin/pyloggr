@@ -7,7 +7,12 @@ from ssl import PROTOCOL_SSLv23, CERT_NONE
 try:
     from secrets import RABBITMQ_PASSWORD, HMAC_KEY, PGSQL_PASSWORD, COOKIE_SECRET
 except ImportError:
-    if os.environ.get('READTHEDOCS', None) != 'True':
+    if os.environ.get('READTHEDOCS', None) == 'True':
+        RABBITMQ_PASSWORD = ''
+        HMAC_KEY = ''
+        PGSQL_PASSWORD = ''
+        COOKIE_SECRET = ''
+    else:
         raise
 
 
