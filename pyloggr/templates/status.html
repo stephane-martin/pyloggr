@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+
+    <title>Syslog status</title>
+    <meta name="description" content="">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Icons: place in the root directory -->
+    <!-- https://github.com/audreyr/favicon-cheat-sheet -->
+
+    <!-- feature detection -->
+    <script src="{{ prefix }}/static/js/detects.js"></script>
+
+    <!-- stylesheets -->
+    <link rel="stylesheet" href="{{ prefix }}/static/css/main.css">
+    <link rel="stylesheet" href="{{ prefix }}/static/css/tables.css">
+
+    <script type='application/javascript'>
+        var prefix = '{{ prefix }}';
+    </script>
+
+
+    <script type='application/javascript' src="{{ prefix }}/static/jquery.js"></script>
+    <script type='application/javascript' src="{{ prefix }}/static/string-format.js"></script>
+    <script type='application/javascript' src="{{ prefix }}/static/status.js"></script>
+
+    <meta charset="UTF-8">
+    <title>Syslog status</title>
+</head>
+
+<body>
+<div class="container">
+    <h1 class="text-center">Syslog status</h1>
+    <table>
+      <thead>
+        <tr><th>Redis cache</th><th>RabbitMQ</th><th>Syslog servers</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{ "ON" if cache_status else "OFF" }} </td>
+          <td>{{ "ON" if rabbitmq_status else "OFF" }}</td>
+          <td><span id="len">{{ syslogs.__len__() }}</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div id='syslogservers'>
+    {% if cache_status %}
+      {% for process in syslogs %}
+        <div id="syslogserver{{ process.task_id }}">
+          <h2>Syslog process {{ process.task_id }}</h2>
+
+          <table id="listofclients{{ process.task_id }}">
+            <thead>
+              <tr><th>IP source</th><th>port source</th><th>Port destination</th></tr>
+            </thead>
+            <tbody>
+              {% for client in process.clients %}
+                <tr id="{{ client.id }}">
+                  <td>{{ client.host }}</td>
+                  <td>{{ client.client_port }}</td>
+                  <td>{{ client.server_port }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endfor %}
+    {% else %}
+      <h2>Redis is not available</h2>
+    {% endif %}
+    </div>
+</div>

@@ -1,0 +1,2 @@
+NGINX_NOT_FOUND %{DATA} \"%{DATA:resource}\" is not found \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
+NGINX_OPEN_FAILED %{DATA} %{WORD}\(\) \"%{DATA:resource}\" failed \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
