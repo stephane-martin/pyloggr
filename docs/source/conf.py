@@ -3,8 +3,21 @@
 import sys
 import os
 sys.path.insert(0, os.path.abspath('../..'))
+from mock import MagicMock
+
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+            return Mock()
+
+MOCK_MODULES = ['enum', 'pyev']
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+
+
 import pyloggr
 import sphinx_readable_theme
+
 
 # -- General configuration ------------------------------------------------
 
