@@ -11,7 +11,9 @@ from tornado.ioloop import IOLoop
 from tornado.gen import coroutine
 
 from pyloggr.main.shipper2pgsql import PgsqlShipper
-from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, FROM_RABBITMQ_TO_PGSQL_CONFIG, LOGGING_CONFIG, PGSQL_CONFIG
+from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, FROM_RABBITMQ_TO_PGSQL_CONFIG
+from pyloggr.config import LOGGING_CONFIG, PGSQL_CONFIG
+from pyloggr.cache import cache
 
 
 CONSUMER_TO_PG_LOGGING_FILENAME = "/tmp/consumer_to_pg.log"
@@ -52,6 +54,7 @@ def start():
     logger = logging.getLogger('consumer_to_pg')
     logger.info("i like rabbits")
     shipper = PgsqlShipper(FROM_RABBITMQ_TO_PGSQL_CONFIG, PGSQL_CONFIG)
+    cache.initialize()
     yield shipper.start()
 
 

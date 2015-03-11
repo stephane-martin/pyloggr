@@ -139,9 +139,12 @@ class Cache(object):
     redis_conn = None
 
     def __init__(self):
-        if Cache.redis_conn is None:
-            Cache.redis_conn = connect_to_redis()
         self.syslog_status = dict()
+
+    @classmethod
+    def initialize(cls):
+        if cls.redis_conn is None:
+            cls.redis_conn = connect_to_redis()
 
     @property
     def syslog(self):

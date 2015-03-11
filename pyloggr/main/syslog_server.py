@@ -525,7 +525,7 @@ class SyslogServer(TCPServer, NotificationProducer):
             IOLoop.instance().remove_timeout(self._connect_rabbitmq_later)
 
     @coroutine
-    def connect_to_rabbitmq(self):
+    def launch(self):
         self.rabbitmq_connection = Publisher(self.rabbitmq_config)
         try:
             rabbit_close_ev = yield self.rabbitmq_connection.start()
@@ -534,7 +534,7 @@ class SyslogServer(TCPServer, NotificationProducer):
             self.rabbitmq_connection = None
             self.shutdown()
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.connect_to_rabbitmq)
+            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
         else:
             if not self.running:
                 self._start_syslog()
@@ -548,7 +548,7 @@ class SyslogServer(TCPServer, NotificationProducer):
                 self.rabbitmq_connection = None
                 self.shutdown()
                 logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-                self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.connect_to_rabbitmq)
+                self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
 
     @classmethod
     def get_ports(cls):

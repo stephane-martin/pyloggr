@@ -6,11 +6,13 @@ import logging
 import logging.config
 import time
 from signal import SIGTERM, SIGINT, signal
+
 from tornado.ioloop import IOLoop
 from tornado.gen import coroutine
 
 from pyloggr.main.web_frontend import WebServer
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, LOGGING_CONFIG
+from pyloggr.cache import cache
 
 HTTP_LOGGING_FILENAME = "/tmp/pyloggr.http.log"
 LOGGING_CONFIG['handlers']['tofile']['filename'] = HTTP_LOGGING_FILENAME
@@ -49,6 +51,7 @@ def sig_handler(sig, frame):
 @coroutine
 def start():
     global webserver
+    cache.initialize()
     webserver = WebServer()
     signal(SIGTERM, sig_handler)
     signal(SIGINT, sig_handler)

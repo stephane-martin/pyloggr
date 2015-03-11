@@ -11,9 +11,8 @@ class Mock(MagicMock):
     def __getattr__(cls, name):
             return Mock()
 
-MOCK_MODULES = ['enum', 'pyev', 'pika']
+MOCK_MODULES = ['enum', 'pyev', 'pika', 'pika.adapters', 'pika.adapters.tornado_connection']
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
-
 
 import pyloggr
 import sphinx_readable_theme

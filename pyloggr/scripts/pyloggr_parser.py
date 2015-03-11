@@ -14,6 +14,7 @@ from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, LOGGING_CONFIG, CON
 from pyloggr.config import FROM_PARSER_TO_RABBITMQ_CONFIG, FROM_RABBITMQ_TO_PARSER_CONFIG
 from pyloggr.main.event_parser import EventParser
 from pyloggr.filters import Filters
+from pyloggr.cache import cache
 
 
 PARSER_LOGGING_FILENAME = "/tmp/parser.log"
@@ -51,7 +52,7 @@ def sig_handler(sig, frame):
 @coroutine
 def start_parser():
     global event_parser, filters
-
+    cache.initialize()
     logger.info("I think so i parse")
     filters = Filters(CONFIG_DIR)
     filters.open()

@@ -14,6 +14,7 @@ from tornado.gen import coroutine
 from pyloggr.main.syslog_server import SyslogServer
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, FROM_RSYSLOG_TO_RABBITMQ_CONFIG, SYSLOG_CONF
 from pyloggr.config import LOGGING_CONFIG
+from pyloggr.cache import cache
 
 
 RELP_LOGGING_FILENAME = "/tmp/relp_server.log"
@@ -53,9 +54,10 @@ def sig_handler(sig, frame):
 
 @coroutine
 def start():
-    logger.info("Starting Syslog Server")
     global server
-    yield server.connect_to_rabbitmq()
+    cache.initialize()
+    logger.info("Starting Syslog Server")
+    yield server.launch()
 
 
 def main():
