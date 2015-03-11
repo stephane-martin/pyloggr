@@ -5,7 +5,6 @@ ftfy
 future
 futures>=2.2
 geoip2>=2.0
-hiredis
 Jinja2>=2.7
 jsonschema>=2.4.0
 marshmallow>=1.2.2
@@ -28,3 +27,4 @@ tornado>=4.1
 toro>=0.8
 twine
 ujson
+Mock

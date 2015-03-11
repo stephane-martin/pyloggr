@@ -12,6 +12,7 @@ with open('HISTORY.rst') as history_file:
 
 requirements = [
     'ftfy',
+    'enum34',
     'ujson',
     'tornado',
     'future',
@@ -21,6 +22,8 @@ requirements = [
     'cryptography',
     'marshmallow',
     'redis',
+    'requests',
+    'six',
     'pika',
     'pyparsing',
     'geoip2',
@@ -28,7 +31,12 @@ requirements = [
     'psycopg2',
     'python-dateutil',
     'regex',
-    'sphinx_readable_theme'
+    'sphinx >= 1.3b3',
+    'sphinx_readable_theme',
+    'sphinx-rtd-theme',
+    'Mock',
+    'wheel',
+    'twine'
 ]
 
 test_requirements = [
@@ -45,7 +53,11 @@ setup(
     url='https://github.com/stephane-martin/pyloggr',
     packages=find_packages(exclude=['tests']),
     setup_requires=[
-        "setuptools_git >= 0.3"
+        "setuptools_git",
+        'setuptools',
+        'twine',
+        'wheel',
+        'Mock'
     ],
     include_package_data = True,
     install_requires=requirements,
