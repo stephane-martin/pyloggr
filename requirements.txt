@@ -23,6 +23,7 @@ sortedcontainers
 Sphinx>=1.3b3
 sphinx-readable-theme
 sphinx-rtd-theme
+pytz
 tornado>=4.1
 toro>=0.8
 twine

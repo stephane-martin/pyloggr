@@ -36,7 +36,8 @@ requirements = [
     'sphinx-rtd-theme',
     'Mock',
     'wheel',
-    'twine'
+    'twine',
+    'pytz'
 ]
 
 test_requirements = [
