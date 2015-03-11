@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
-
+import os
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -11,34 +12,15 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    'ftfy',
-    'enum34',
-    'ujson',
-    'tornado',
-    'future',
-    'futures',
-    'jinja2',
-    'sortedcontainers',
-    'cryptography',
-    'marshmallow',
-    'redis',
-    'requests',
-    'six',
-    'pika',
-    'pyparsing',
-    'geoip2',
-    'toro',
-    'psycopg2',
-    'python-dateutil',
-    'regex',
-    'sphinx >= 1.3b3',
-    'sphinx_readable_theme',
-    'sphinx-rtd-theme',
-    'Mock',
-    'wheel',
-    'twine',
-    'pytz'
+    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2',
+    'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
+    'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3b3',
+    'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz'
 ]
+
+if on_rtd:
+    requirements.remove('cryptography')
+    requirements.remove('pika')
 
 test_requirements = [
     # TODO: put package test requirements here
