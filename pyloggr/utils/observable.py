@@ -38,7 +38,7 @@ class Observable(object):
         self.queue = None
 
     @coroutine
-    def notify_observers(self, d):
+    def notify_observers(self, d, routing_key=None):
         for observer in self.observers:
             try:
                 observer.notified(d)
@@ -54,7 +54,7 @@ class NotificationProducer(Observable):
         self.queue = None
 
     @coroutine
-    def notify_observers(self, d):
+    def notify_observers(self, d, routing_key=None):
         """
         :param d: a message to send to observers
         :type d: dict
@@ -67,13 +67,15 @@ class NotificationProducer(Observable):
         if not self.queue:
             logger.debug("No notification queue")
             return
-        logger.debug("Sending notification with routing key '{}'".format(d['subject']))
+        if not routing_key:
+            return
+        logger.debug("Sending notification with routing key '{}'".format(routing_key))
         try:
             json_message = ujson.dumps(d)
             yield self.queue.publish(
                 exchange='pyloggr.pubsub',
                 body=json_message,
-                routing_key=d['subject'],
+                routing_key=routing_key,
                 persistent=False
             )
         except Exception:

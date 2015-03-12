@@ -1,7 +1,3 @@
-=======
-Pyloggr
-=======
-
 Overview
 --------
 
@@ -13,6 +9,7 @@ pyloggr is a set of tools to
 
 * Free software: GPLv3 (or later) license
 * Documentation: https://pyloggr.readthedocs.org.
+* Github: https://github.com/stephane-martin/pyloggr
 
 Features
 --------
@@ -25,4 +22,5 @@ Features
 Todo
 ----
 
-See github issues
+See `Github issues <https://github.com/stephane-martin/pyloggr/issues>`_
+

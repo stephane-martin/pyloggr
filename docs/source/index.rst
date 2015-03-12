@@ -2,12 +2,14 @@
 Pyloggr's documentation
 =======================
 
-Contents:
+.. include:: readme.rst
+
+------------------------------------
 
 .. toctree::
    :maxdepth: 3
 
-   readme
+   architecture
    installation
    configuration
    deployment

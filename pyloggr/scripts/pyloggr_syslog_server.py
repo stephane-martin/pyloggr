@@ -11,13 +11,15 @@ from tornado.ioloop import IOLoop
 from tornado.process import fork_processes
 from tornado.gen import coroutine
 
-from pyloggr.main.syslog_server import SyslogServer
+from pyloggr.main.syslog_server import SyslogServer, SyslogConfig
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, FROM_RSYSLOG_TO_RABBITMQ_CONFIG, SYSLOG_CONF
 from pyloggr.config import LOGGING_CONFIG
-from pyloggr.cache import cache
+from pyloggr.cache import cache, CacheError
 
 
 RELP_LOGGING_FILENAME = "/tmp/relp_server.log"
+LOGGING_CONFIG['handlers']['tofile']['filename'] = RELP_LOGGING_FILENAME
+logging.config.dictConfig(LOGGING_CONFIG)
 
 server = None
 logger = logging.getLogger('relp_server')
@@ -45,6 +47,7 @@ def shutdown():
             logger.info("Stopped the IOLoop")
 
     stop_loop(countdown)
+    cache.shutdown()
 
 
 def sig_handler(sig, frame):
@@ -55,17 +58,20 @@ def sig_handler(sig, frame):
 @coroutine
 def start():
     global server
-    cache.initialize()
     logger.info("Starting Syslog Server")
     yield server.launch()
 
 
 def main():
     global server
+    try:
+        cache.initialize()
+    except CacheError as err:
+        logger.error(err)
+        return
 
-    LOGGING_CONFIG['handlers']['tofile']['filename'] = RELP_LOGGING_FILENAME
-    logging.config.dictConfig(LOGGING_CONFIG)
-    SyslogServer.bind_all_sockets()
+    config = SyslogConfig(SYSLOG_CONF)
+    config.bind_all_sockets()
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
 
@@ -74,7 +80,7 @@ def main():
 
     server = SyslogServer(
         rabbitmq_config=FROM_RSYSLOG_TO_RABBITMQ_CONFIG,
-        relp_server_config=SYSLOG_CONF,
+        syslog_config=config,
         task_id=task_id
     )
 

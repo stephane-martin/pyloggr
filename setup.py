@@ -29,15 +29,18 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2',
+    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis',
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3b3',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz'
 ]
 
 if on_rtd:
+    # C extensions can cause problems on readthedocs
     requirements.remove('cryptography')
     requirements.remove('pika')
+    requirements.remove('subprocess32')
+    requirements.remove('hiredis')
 
 test_requirements = [
     # TODO: put package test requirements here

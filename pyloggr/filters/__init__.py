@@ -1,4 +1,12 @@
 # encoding: utf-8
+
+"""
+The `filters` subpackage contains implementation of the different event filters. Event filters
+are used by the `parser` process.
+
+----------------------------
+
+"""
 __author__ = 'stef'
 
 from os.path import join

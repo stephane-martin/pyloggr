@@ -2,6 +2,7 @@
 __author__ = 'stef'
 
 import socket
+from itertools import chain
 import ssl
 import logging
 import uuid
@@ -17,10 +18,9 @@ from past.builtins import basestring
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.utils.fix_unicode import to_unicode
-from pyloggr.config import SLEEP_TIME, SYSLOG_CONF
+from pyloggr.config import SLEEP_TIME
 from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,8 @@ class Clients(NotificationProducer):
         props['task_id'] = self.task_id
         IOLoop.instance().add_callback(
             self.notify_observers,
-            {'action': 'add_client', 'client': props, 'subject': 'pyloggr.syslog_clients'}
+            {'action': 'add_client', 'client': props},
+            'pyloggr.syslog.clients'
         )
 
     def remove(self, client_id):
@@ -69,7 +70,8 @@ class Clients(NotificationProducer):
             cache.syslog[self.task_id].clients = self
             IOLoop.instance().add_callback(
                 self.notify_observers,
-                {'action': 'remove_client', 'client': props, 'subject': 'pyloggr.syslog_clients'}
+                {'action': 'remove_client', 'client': props},
+                'pyloggr.syslog.clients'
             )
 
     def __getitem__(self, client_id):
@@ -139,7 +141,7 @@ def bytes_to_event(bytes_event):
     try:
         event = Event.load(bytes_event)
     except ParsingError:
-        logger.warning(u"Pyloggr RELP Server: could not unmarshall a sylog event")
+        logger.warning(u"Pyloggr syslog server: could not unmarshall a syslog event")
         logger.debug(to_unicode(bytes_event))
         raise
     else:
@@ -152,8 +154,11 @@ class SyslogClientConnection(object):
     Encapsulates a connection with a syslog client
     """
 
-    def __init__(self, stream, address, relp_server_config, rabbitmq_config, rabbitmq_connection):
-        self.relp_server_config = relp_server_config
+    def __init__(self, stream, address, syslog_config, rabbitmq_config, rabbitmq_connection):
+        """
+        :type syslog_config: SyslogConfig
+        """
+        self.syslog_config = syslog_config
         self.stream = stream
         self.address = address
         if address:
@@ -173,6 +178,14 @@ class SyslogClientConnection(object):
 
         self.nb_messages_received = 0
         self.nb_messages_transmitted = 0
+
+        self.dispatch_dict = {
+            'tcp': self.dispatch_tcp_client,
+            'relp': self.dispatch_relp_client,
+            'tcpssl': self.dispatch_tcp_client,
+            'relpssl': self.dispatch_relp_client,
+            'socket': self.dispatch_tcp_client
+        }
 
     @property
     def props(self):
@@ -201,20 +214,29 @@ class SyslogClientConnection(object):
         _process_tcp_event(bytes_event)
         Process a syslog/TCP event.
 
-        We have got a Syslog event with TCP protocol
-        Event was transmitted via TCP, so the original sender hasn't kept the event
-        We must take care that it is really published in RabbitMQ or it will be lost!
+        We got a Syslog event with TCP protocol. Event was transmitted via TCP, so the original
+        sender hasn't kept the event. We must take care that it is really published in RabbitMQ
+        or it will be lost!
 
         :param bytes_event: the event as bytes
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from TCP client {}:{}".format(self.client_host, self.client_port))
             event = bytes_to_event(bytes_event)
+            event['syslog_server_port'] = self.server_port
+            event['syslog_client_host'] = self.client_host
             self.nb_messages_received += 1
 
-            status = yield publish_syslog_event(self.rabbitmq_connection, self.rabbitmq_config['exchange'], event)
+            status = yield publish_syslog_event(
+                rabbitmq_connection=self.rabbitmq_connection,
+                exchange=self.rabbitmq_config['exchange'],
+                event=event,
+                routing_key='pyloggr.syslog.{}'.format(self.server_port)
+            )
             if status:
                 self.nb_messages_transmitted += 1
             else:
@@ -235,14 +257,24 @@ class SyslogClientConnection(object):
         :param bytes_event: the event as bytes
         :param relp_event_id: event ID
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from RELP client {}:{}".format(self.client_host, self.client_port))
             event = bytes_to_event(bytes_event)
+            event['syslog_server_port'] = self.server_port
+            event['syslog_client_host'] = self.client_host
+
             self.nb_messages_received += 1
 
-            status = yield publish_syslog_event(self.rabbitmq_connection, self.rabbitmq_config['exchange'], event)
+            status = yield publish_syslog_event(
+                rabbitmq_connection=self.rabbitmq_connection,
+                exchange=self.rabbitmq_config['exchange'],
+                event=event,
+                routing_key='pyloggr.syslog.{}'.format(self.server_port)
+            )
             if status:
                 self.stream.write('{} rsp 6 200 OK\n'.format(relp_event_id))
                 self.nb_messages_transmitted += 1
@@ -262,7 +294,9 @@ class SyslogClientConnection(object):
         :param command: the RELP command
         :param data: data transmitted after command (can be empty)
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         if command == 'open':
             answer = '%s rsp %d 200 OK\n%s\n' % (relp_event_id, len(data) + 7, data)
@@ -282,7 +316,10 @@ class SyslogClientConnection(object):
         dispatch_tcp_client()
         Implements Syslog/TCP protocol
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
+
 
         From RFC 6587::
 
@@ -340,9 +377,11 @@ class SyslogClientConnection(object):
     def _read_next_token(self):
         """
         _read_next_token()
-        Reads the stream until we meet a space delimiter
+        Reads the stream until we get a space delimiter
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         # todo: perf optimisation
         token = ''
@@ -359,7 +398,10 @@ class SyslogClientConnection(object):
         dispatch_relp_client()
         Implements RELP protocol
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
+
 
         From http://www.rsyslog.com/doc/relp.html::
 
@@ -419,24 +461,22 @@ class SyslogClientConnection(object):
         on_connect()
         Called when a client connects to SyslogServer.
 
-        We find the protocol by the connecting port
-        Then run the appropriate dispatch method
+        We find the protocol by looking at the connecting port. Then run the appropriate dispatch method.
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
 
         try:
             server_sockname = self.stream.socket.getsockname()
             if isinstance(server_sockname, basestring):
-                # socket unix
-                self.server_port = server_sockname
+                server_port = server_sockname       # socket unix
             elif len(server_sockname) == 2:
-                # ipv4
-                self.server_port = server_sockname[1]
+                server_port = server_sockname[1]    # ipv4
                 (self.client_host, self.client_port) = self.stream.socket.getpeername()
             elif len(server_sockname) == 4:
-                # ipv6
-                self.server_port = server_sockname[1]
+                server_port = server_sockname[1]    # ipv6
                 (self.client_host, self_client_port, self.flowinfo, self.scopeid) = self.stream.socket.getpeername()
             else:
                 raise ValueError
@@ -444,39 +484,31 @@ class SyslogClientConnection(object):
         except StreamClosedError:
             logger.info("The client went away before it could be dispatched")
             self.disconnect()
+            return
         except ValueError:
             logger.warning("Unknown socket type")
             self.disconnect()
-        else:
-            if self.server_port not in [
-                self.relp_server_config['relp_port'],
-                self.relp_server_config['relpssl_port'],
-                self.relp_server_config['tcp_port'],
-                self.relp_server_config['tcpssl_port'],
-                self.relp_server_config['unix_socket']
-            ]:
-                logger.warning("Don't know what to do with port '{}'".format(self.server_port))
-                return
+            return
 
-            clients.add(self.client_id, self)
+        t = self.syslog_config.get_connection_type(server_port)
 
-            if self.server_port == self.relp_server_config['relp_port']:
-                logger.info('New RELP client is connected {}:{}'.format(self.client_host, self.client_port))
-                yield self.dispatch_relp_client()
-            if self.server_port == self.relp_server_config['relpssl_port']:
-                logger.info('New RELP/TLS client is connected {}:{}'.format(self.client_host, self.client_port))
-                yield self.dispatch_relp_client()
-            elif self.server_port == self.relp_server_config['tcp_port']:
-                logger.info('New TCP client is connected {}:{}'.format(self.client_host, self.client_port))
-                yield self.dispatch_tcp_client()
-            elif self.server_port == self.relp_server_config['tcpssl_port']:
-                logger.info('New TCP/TLS client is connected {}:{}'.format(self.client_host, self.client_port))
-                yield self.dispatch_tcp_client()
-            elif self.server_port == self.relp_server_config['unix_socket']:
-                logger.info("New Unix Socket client is connected")
-                yield self.dispatch_tcp_client()
-            else:
-                self.disconnect()
+        if t is None:
+            logger.warning("Don't know what to do with port '{}'".format(self.server_port))
+            self.disconnect()
+            return
+
+        dispatch_function = self.dispatch_dict.get(t, None)
+        if dispatch_function is None:
+            self.disconnect()
+            return
+
+        self.server_port = server_port
+        clients.add(self.client_id, self)
+        logger.info('New client is connected {}:{} to {}'.format(
+            self.client_host, self.client_port, server_port
+        ))
+        assert(callable(dispatch_function))
+        yield dispatch_function()
 
     def disconnect(self):
         """
@@ -484,6 +516,79 @@ class SyslogClientConnection(object):
         """
         self.stream.close()
         clients.remove(self.client_id)
+
+
+class SyslogConfig(object):
+    """
+    Encapsulates the syslog server configuration
+
+    """
+    def __init__(self, conf):
+        self.conf = conf
+        protocol_to_port = dict()
+        port_to_protocol = dict()
+
+        if conf.get('relp_port', None) is not None:
+            protocol_to_port['relp'] = int(conf['relp_port'])
+            port_to_protocol[int(conf['relp_port'])] = 'relp'
+        if conf.get('tcp_port', None) is not None:
+            protocol_to_port['tcp'] = int(conf['tcp_port'])
+            port_to_protocol[int(conf['tcp_port'])] = 'tcp'
+        if conf.get('ssl', None) is not None:
+            if conf.get('tcpssl_port', None) is not None:
+                protocol_to_port['tcpssl'] = int(conf['tcpssl_port'])
+                port_to_protocol[int(conf['tcpssl_port'])] = 'tcpssl'
+            if conf.get('relpssl_port', None) is not None:
+                protocol_to_port['relpssl'] = int(conf['relpssl_port'])
+                port_to_protocol[int(conf['relpssl_port'])] = 'relpssl'
+
+        self.unix_socket_name = conf.get('unix_socket', None)
+        if self.unix_socket_name is not None:
+            protocol_to_port['socket'] = self.unix_socket_name
+            port_to_protocol[self.unix_socket_name] = 'socket'
+
+        self.protocol_to_port = protocol_to_port
+        self.port_to_protocol = port_to_protocol
+
+        self.list_of_sockets = list()
+
+
+    @property
+    def ssl(self):
+        return self.conf.get('ssl', None)
+
+    def is_port_ssl(self, port):
+        if 'ssl' not in self.conf:
+            return False
+        if self.conf['ssl'] is None:
+            return False
+        return port == self.conf.get('tcpssl_port', None) or port == self.conf.get('relpssl_port', None)
+
+    def get_connection_type(self, port):
+        """
+        :rtype: str
+        """
+        return self.port_to_protocol.get(port, None)
+
+    def bind_all_sockets(self):
+        """
+        Bind the sockets to the current server
+        :rtype: list
+
+        """
+        address = ''
+        if self.conf.get('localhost_only', None):
+            address = '127.0.0.1'
+
+        numeric_ports = [port for port in self.port_to_protocol if str(port).isdigit()]
+        list_of_sockets = [bind_sockets(port, address) for port in numeric_ports]
+        logger.info("Syslog Pyloggr will listen on {}".format(str(numeric_ports)))
+
+        if self.unix_socket_name is not None:
+            list_of_sockets.append([bind_unix_socket(self.unix_socket_name, mode=0o666)])
+            logger.info("Syslog Pyloggr will listen on unix socket '{}'".format(self.unix_socket_name))
+        self.list_of_sockets = list(chain.from_iterable(list_of_sockets))
+        return self.list_of_sockets
 
 
 class SyslogServer(TCPServer, NotificationProducer):
@@ -496,12 +601,17 @@ class SyslogServer(TCPServer, NotificationProducer):
     :todo: receive Linux kernel messages
     """
 
-    def __init__(self, rabbitmq_config, relp_server_config, task_id):
+    def __init__(self, rabbitmq_config, syslog_config, task_id):
+        """
+        :type syslog_config: SyslogConfig
+        :type task_id: int
+        """
+        assert(isinstance(syslog_config, SyslogConfig))
         TCPServer.__init__(self)
         NotificationProducer.__init__(self)
 
         self.rabbitmq_config = rabbitmq_config
-        self.syslog_conf = relp_server_config
+        self.syslog_config = syslog_config
         self.task_id = task_id
         Clients.set_task_id(task_id)
 
@@ -519,13 +629,24 @@ class SyslogServer(TCPServer, NotificationProducer):
 
     def _cancel_connect_later(self):
         """
-        Used in normak shutdown process (dont try to reconnect when we have decided to shutdown)
+        Used in normal shutdown process (dont try to reconnect when we have decided to shutdown)
         """
         if self._connect_rabbitmq_later is not None:
             IOLoop.instance().remove_timeout(self._connect_rabbitmq_later)
 
     @coroutine
     def launch(self):
+        """
+        Starts the server
+
+        - First we try to connect to RabbitMQ
+        - If successfull, we start to listen for syslog clients
+
+        Note
+        ====
+        Tornado coroutine
+
+        """
         self.rabbitmq_connection = Publisher(self.rabbitmq_config)
         try:
             rabbit_close_ev = yield self.rabbitmq_connection.start()
@@ -536,87 +657,46 @@ class SyslogServer(TCPServer, NotificationProducer):
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
             self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
         else:
-            if not self.running:
-                self._start_syslog()
             clients.register_queue(self.rabbitmq_connection)
             self.register_queue(self.rabbitmq_connection)
-            # the next yield only returns if rabbitmq connection has been closed
+            if not self.running:
+                yield self._start_syslog()
+            # the next yield only returns if rabbitmq connection has been lost
             yield rabbit_close_ev.wait()
+            # don't notify to RabbitMQ... as we lost connection
             clients.unregister_queue()
             self.unregister_queue()
             if not self.rabbitmq_connection.shutting_down:
+                # let's stop the service
                 self.rabbitmq_connection = None
                 self.shutdown()
                 logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
                 self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
 
-    @classmethod
-    def get_ports(cls):
-        """
-        Returns the list of listening ports.
-        :returns: list of ports
-        :rtype: list
-        """
-        ports = list()
-        if SYSLOG_CONF['relp_port'] is not None:
-            ports.append(SYSLOG_CONF['relp_port'])
-        if SYSLOG_CONF['tcp_port'] is not None:
-            ports.append(SYSLOG_CONF['tcp_port'])
-        if SYSLOG_CONF['ssl'] is not None:
-            if SYSLOG_CONF['tcpssl_port'] is not None:
-                ports.append(SYSLOG_CONF['tcpssl_port'])
-            if SYSLOG_CONF['relpssl_port'] is not None:
-                ports.append(SYSLOG_CONF['relpssl_port'])
-        return ports
-
-    @classmethod
-    def bind_all_sockets(cls):
-        """
-        Bind the sockets to the current server
-        :rtype: list
-
-        """
-        address = ''
-        if SYSLOG_CONF['localhost_only']:
-            address = '127.0.0.1'
-
-        ports = cls.get_ports()
-
-        cls.list_of_sockets = [bind_sockets(port, address) for port in ports]
-        logger.info("Syslog Pyloggr listening on {}".format(str(ports)))
-
-        if SYSLOG_CONF['unix_socket'] is not None:
-            cls.list_of_sockets.append([bind_unix_socket(SYSLOG_CONF['unix_socket'], mode=0o666)])
-            logger.info("Syslog Pyloggr listening on socket '{}'".format(SYSLOG_CONF['unix_socket']))
-
-        return cls.list_of_sockets
-
+    @coroutine
     def _start_syslog(self):
         """
         Start to listen for syslog connections
         """
-        for sockets in self.list_of_sockets:
-            self.add_sockets(sockets)
+        self.add_sockets(self.syslog_config.list_of_sockets)
 
         self.running = True
         cache.syslog[self.task_id].status = True
 
         self._start_periodic()
-        IOLoop.instance().add_callback(
-            self.notify_observers, {
-                'action': 'add_server', 'subject': 'pyloggr.syslog_servers', 'ports': self.get_ports(),
-                'id': self.task_id
-            }
+        yield self.notify_observers(
+            {'action': 'add_server', 'ports': self.syslog_config.port_to_protocol.keys(), 'id': self.task_id},
+            'pyloggr.syslog.servers'
         )
 
     def _start_periodic(self):
         """
-        Every 2 minutes we check if there are some events in the rescue queue
+        Every minute we check if there are some events in the rescue queue
         """
         if self.periodic_queue_saving is None:
             self.periodic_queue_saving = PeriodicCallback(
                 callback=self._try_publish_again,
-                callback_time=1000 * 60 * 2
+                callback_time=1000 * 60
             )
             self.periodic_queue_saving.start()
 
@@ -635,7 +715,9 @@ class SyslogServer(TCPServer, NotificationProducer):
         _try_publish_again()
         Check the rescue queue, try to publish events in RabbitMQ if we find some of them
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         nb_events = cache.rescue_queue_length
         if nb_events is None:
@@ -670,36 +752,43 @@ class SyslogServer(TCPServer, NotificationProducer):
         Called by tornado when we have a new client.
 
         :param stream: IOStream for the new connection
-        :param address: ???
+        :type stream: `IOStream`
+        :param address: tuple (client IP, client source port)
+        :type address: tuple
 
-        .. note:: Tornado coroutine
+        Note
+        ====
+        Tornado coroutine
         """
         connection = SyslogClientConnection(
             stream=stream,
             address=address,
-            relp_server_config=self.syslog_conf,
+            syslog_config=self.syslog_config,
             rabbitmq_config=self.rabbitmq_config,
             rabbitmq_connection=self.rabbitmq_connection,
         )
         yield connection.on_connect()
 
+    @coroutine
     def _stop_syslog(self):
         """
         Stop listening for syslog connections
+
+        Note
+        ====
+        Tornado coroutine
         """
         if self.running:
             self.running = False
-            cache.syslog[self.task_id].status = False
             logger.info("Closing RELP clients connections")
             for client in clients.values():
                 client.stream.close()
             logger.info("Stopping the RELP server")
             self.stop()
-            IOLoop.instance().add_callback(
-                self.notify_observers, {
-                    'action': 'remove_server', 'subject': 'pyloggr.syslog_servers', 'id': self.task_id
-                }
-            )
+            cache.syslog[self.task_id].status = False
+            yield self.notify_observers({
+                'action': 'remove_server', 'subject': 'pyloggr.syslog.servers', 'id': self.task_id
+            })
 
         self._stop_periodic()
 
@@ -707,36 +796,35 @@ class SyslogServer(TCPServer, NotificationProducer):
     def shutdown(self):
         """
         Shutdowns completely the server. Stop listening for syslog clients. Close connection to RabbitMQ.
+
+        Note
+        ====
+        Tornado coroutine
         """
-        clients.unregister_queue()
-        self._stop_syslog()
+        yield self._stop_syslog()
+        del cache.syslog[self.task_id]
         self._cancel_connect_later()
+        clients.unregister_queue()
         if self.rabbitmq_connection:
-            yield sleep(2)
             self.rabbitmq_connection.stop()
             self.rabbitmq_connection = None
-        del cache.syslog[self.task_id]
 
         self._reset()
 
     def _handle_connection(self, connection, address):
         """
-        Inherits _handle_connection from vanilla TCPServer to manage SSL connections
-        Called by Tornado when a client connects
+        Inherits _handle_connection from parent TCPServer to manage SSL connections. Called by
+        Tornado when a client connects.
         """
 
-        if (self.syslog_conf['ssl']) is None:
-            return super(SyslogServer, self)._handle_connection(connection, address)
-
         port = connection.getsockname()[1]
-
-        if port != self.syslog_conf['tcpssl_port'] and port != self.syslog_conf['relpssl_port']:
+        if not self.syslog_config.is_port_ssl(port):
             return super(SyslogServer, self)._handle_connection(connection, address)
 
         try:
             connection = ssl_wrap_socket(
                 connection,
-                self.syslog_conf['ssl'],
+                self.syslog_config.ssl,
                 server_side=True,
                 do_handshake_on_connect=False
             )
@@ -745,6 +833,9 @@ class SyslogServer(TCPServer, NotificationProducer):
                 return connection.close()
             else:
                 raise
+        except IOError as err:
+            logger.error("IOError happened when client connected with TLS. Check the SSL configuration")
+            return connection.close()
         except socket.error as err:
             if errno_from_exception(err) in (errno.ECONNABORTED, errno.EINVAL):
                 return connection.close()

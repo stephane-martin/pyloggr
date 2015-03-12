@@ -11,10 +11,12 @@ class Mock(MagicMock):
     def __getattr__(cls, name):
             return Mock()
 
+# let's mock some modules so that readthedocs doesn't complain
+
 MOCK_MODULES = [
     'enum', 'pyev', 'pika', 'pika.adapters', 'pika.adapters.tornado_connection', 'cryptography',
     'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
-    'cryptography.exceptions'
+    'cryptography.exceptions', 'subprocess32'
 ]
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
@@ -25,7 +27,7 @@ import sphinx_readable_theme
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
-#needs_sphinx = '1.0'
+needs_sphinx = '1.3'
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom

@@ -12,7 +12,7 @@ from tornado.gen import coroutine
 
 from pyloggr.main.web_frontend import WebServer
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, LOGGING_CONFIG
-from pyloggr.cache import cache
+from pyloggr.cache import cache, CacheError
 
 HTTP_LOGGING_FILENAME = "/tmp/pyloggr.http.log"
 LOGGING_CONFIG['handlers']['tofile']['filename'] = HTTP_LOGGING_FILENAME
@@ -41,6 +41,7 @@ def shutdown():
             logger.info("Stopped the IOLoop")
 
     stop_loop()
+    cache.shutdown()
 
 
 def sig_handler(sig, frame):
@@ -51,7 +52,11 @@ def sig_handler(sig, frame):
 @coroutine
 def start():
     global webserver
-    cache.initialize()
+    try:
+        cache.initialize()
+    except CacheError as err:
+        logger.error(err)
+        return
     webserver = WebServer()
     signal(SIGTERM, sig_handler)
     signal(SIGINT, sig_handler)

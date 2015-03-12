@@ -27,10 +27,6 @@ RABBITMQ_USER = 'python'
 RABBITMQ_VHOST = 'syslog'
 
 
-
-
-# to get a good key: base64.b64encode(os.urandom(32))
-
 FROM_RSYSLOG_TO_RABBITMQ_CONFIG = {
     'host': RABBITMQ_HOST,
     'port': RABBITMQ_PORT,
@@ -131,9 +127,6 @@ REDIS_CONFIG = {
     'host': '127.0.0.1',
     'port': 6379,
     'password': None,
-    'rescue_queue_name': 'pyloggr.rescue_queue',
-    'syslog_clients': 'pyloggr.syslog_clients',
-    'syslog_status': 'pyloggr.syslog_status',
     'try_spawn_redis': True,
     'path': '/usr/local/bin/redis-server',
     'config_file': '/usr/local/etc/redis.conf'

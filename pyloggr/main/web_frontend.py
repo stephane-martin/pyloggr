@@ -108,7 +108,7 @@ class PyloggrApplication(Application):
 
 class WebServer(object):
     def __init__(self):
-        self.consumer = NotificationsConsumer(RABBITMQ_NOTIFICATIONS_CONFIG, 'pyloggr.*')
+        self.consumer = NotificationsConsumer(RABBITMQ_NOTIFICATIONS_CONFIG, 'pyloggr.*.*')
         self.app = PyloggrApplication('/syslog', self.consumer)
         self.http_server = HTTPServer(self.app)
         self.sockets = bind_sockets(8888)
