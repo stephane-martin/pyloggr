@@ -59,7 +59,7 @@ class EventParser(object):
     def _start_consumer(self):
         self.consumer = Consumer(self.from_rabbitmq_config)
         try:
-            yield self.consumer.start()
+            yield self.consumer.start(self.from_rabbitmq_config['qos'])
         except RabbitMQConnectionError:
             logger.warning("Can't connect to consumer")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))

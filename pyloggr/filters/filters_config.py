@@ -291,6 +291,7 @@ class ConfigParser(object):
             (open_par + condition.setParseAction(make_condition) + operand +
              condition.setParseAction(make_condition) + close_par)
         )
+        condition = condition.setResultsName('condition')
 
         filter_argument = my_qs | plain_field | extended_field
         filter_arguments = Optional(delimitedList(filter_argument)).setResultsName('arguments')

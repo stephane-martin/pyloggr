@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 class Observable(object):
+    """
+    An observable produces notifications and sends them to observers
+    """
 
     def __init__(self):
         self.observers = list()
@@ -18,6 +21,8 @@ class Observable(object):
 
     def register(self, observer):
         """
+        Subscribe an observe for future notifications
+
         :param observer: object that implements the Observer interface
         :type observer: Observer
         """
@@ -26,6 +31,8 @@ class Observable(object):
 
     def unregister(self, observer):
         """
+        Unsubscribe an observer
+
         :param observer: object that implements the Observer interface
         :type observer: Observer
         """
@@ -33,12 +40,27 @@ class Observable(object):
             self.observers.remove(observer)
 
     def unregister_all(self):
+        """
+        Unsubscribe all observers
+        """
         if self.observers:
             del self.observers[:]
         self.queue = None
 
     @coroutine
     def notify_observers(self, d, routing_key=None):
+        """
+        Notify observers that the observable has a message for them
+
+        :param d: message
+        :type d: dict
+        :param routing_key: unused
+
+        Note
+        ====
+        Tornado coroutine
+        """
+
         for observer in self.observers:
             try:
                 observer.notified(d)
@@ -47,6 +69,9 @@ class Observable(object):
 
 
 class NotificationProducer(Observable):
+    """
+    A NotificationProducer produces some notifications and sends them to RabbitMQ
+    """
     def register_queue(self, publisher):
         self.queue = publisher
 
@@ -58,6 +83,12 @@ class NotificationProducer(Observable):
         """
         :param d: a message to send to observers
         :type d: dict
+        :param routing_key: routing key for the message
+        :type routing_key: str
+
+        Note
+        ====
+        Tornado coroutine
         """
         for observer in self.observers:
             try:
@@ -83,6 +114,9 @@ class NotificationProducer(Observable):
 
 
 class Observer(object):
+    """
+    Implemented by classes that should be observers
+    """
     __metaclass__ = ABCMeta
 
     @abstractmethod

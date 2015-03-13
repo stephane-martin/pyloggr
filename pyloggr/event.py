@@ -19,6 +19,7 @@ from marshmallow import Schema, fields
 from marshmallow.exceptions import UnmarshallingError
 from future.utils import python_2_unicode_compatible, raise_from
 from builtins import str as text
+# noinspection PyPackageRequirements
 import past.builtins
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -62,6 +63,7 @@ class CFieldSchema(Schema):
             return None
         return CField(**data)
 
+from arrow import Arrow
 
 class EventSchema(Schema):
     """
@@ -137,6 +139,7 @@ class CField(object):
     """
 
     schema = CFieldSchema()
+    __slots__ = ('key', 'value')
 
     def __init__(self, key="", value=""):
         self.key = key
@@ -151,6 +154,7 @@ class CField(object):
     def __repr__(self):
         return self.str()
 
+# todo: delete iut field
 
 @python_2_unicode_compatible
 class Event(object):
@@ -184,6 +188,11 @@ class Event(object):
 
     """
     schema = EventSchema()
+
+    __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
+                 'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
+                 'timereported', 'timegenerated', 'timehmac', 'iut', 'trusted_comm', 'trusted_exe',
+                 'trusted_cmdline', 'cfields', '_tags')
 
     def __init__(self, procid=None, severity="", facility="", app_name="", source="", programname="",
                  syslogtag="", message="", uuid="", hmac="", timereported=None, timegenerated=None, timehmac=None, iut=1,
@@ -279,6 +288,20 @@ class Event(object):
             return 0
         return cmp(self.timegenerated, other.timegenerated)
 
+    def _hmac(self):
+        h = HMAC.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
+        h.update(self.severity.encode("utf-8"))
+        h.update(self.facility.encode("utf-8"))
+        h.update(self.app_name.encode("utf-8"))
+        h.update(self.source.encode("utf-8"))
+        h.update(self.message.encode("utf-8"))
+        if self.timereported is not None:
+            # take care of changing timezones...
+            h.update(str(Arrow.fromdatetime(self.timereported).float_timestamp))
+
+        h.update(str(self.timehmac))
+        return h
+
     def generate_hmac(self):
         """
         Generate a HMAC from the fields: severity, facility, app_name, source, message, timereported
@@ -290,16 +313,8 @@ class Event(object):
             logger.warning("Event already has a HMAC")
             self.verify_hmac()
             return
-        h = HMAC.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
         self.timehmac = datetime.now(tzutc())
-        h.update(self.severity.encode("utf-8"))
-        h.update(self.facility.encode("utf-8"))
-        h.update(self.app_name.encode("utf-8"))
-        h.update(self.source.encode("utf-8"))
-        h.update(self.message.encode("utf-8"))
-        if self.timereported is not None:
-            h.update(str(self.timereported))
-        h.update(str(self.timehmac))
+        h = self._hmac()
         self.hmac = b64encode(h.finalize())
         return self.hmac
 
@@ -316,17 +331,7 @@ class Event(object):
             raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC".format(self.uuid))
         if not self.timehmac:
             raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC time".format(self.uuid))
-        h = HMAC.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
-        h.update(self.severity.encode("utf-8"))
-        h.update(self.facility.encode("utf-8"))
-        h.update(self.app_name.encode("utf-8"))
-        h.update(self.source.encode("utf-8"))
-        h.update(self.message.encode("utf-8"))
-        if self.timereported is not None:
-            h.update(str(self.timereported))
-        if self.timegenerated is not None:
-            h.update(str(self.timegenerated))
-        h.update(str(self.timehmac))
+        h = self._hmac()
         try:
             h.verify(b64decode(self.hmac))
         except InvalidSignature:

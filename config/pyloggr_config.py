@@ -56,6 +56,7 @@ FROM_RABBITMQ_TO_PARSER_CONFIG = {
     'password': RABBITMQ_PASSWORD,
     'vhost': RABBITMQ_VHOST,
     'queue': 'to_parser',
+    'qos': 100
 }
 
 FROM_RABBITMQ_TO_PGSQL_CONFIG = {
@@ -65,6 +66,7 @@ FROM_RABBITMQ_TO_PGSQL_CONFIG = {
     'password': RABBITMQ_PASSWORD,
     'vhost': RABBITMQ_VHOST,
     'queue': 'to_pgsql',
+    'qos': 510
 }
 
 RABBITMQ_NOTIFICATIONS_CONFIG = {

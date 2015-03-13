@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationsConsumer(Consumer, Observable):
+    """
+    Consumes notification that were posted in RabbitMQ
+    """
     def __init__(self, rabbitmq_config, binding_key):
         Consumer.__init__(self, rabbitmq_config, binding_key)
         Observable.__init__(self)

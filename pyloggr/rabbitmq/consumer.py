@@ -21,8 +21,11 @@ class RabbitMQMessage(object):
     """
     Represents a message from RabbitMQ
 
-    Consumer.start_consuming returns a queue. Elements in the queue have RabbitMQMessage type.
+    `Consumer.start_consuming` returns a queue. Elements in the queue have `RabbitMQMessage` type.
     """
+
+    __slots__ = ('delivery_tag', 'props', 'body', 'channel')
+
     def __init__(self, delivery_tag, props, body, channel):
         self.delivery_tag = delivery_tag
         self.props = props
@@ -88,10 +91,12 @@ class Consumer(object):
         self.connection.channel(on_open_callback=callback)
 
     @coroutine
-    def start(self):
+    def start(self, qos=None):
         """
-        Opens the connection to RabbitMQ
+        Opens the connection to RabbitMQ as a consumer
 
+        :param qos: how many messages RabbitMQ should send at once ?
+        :type qos: int
         :returns: a Toro event that triggers when the connection to RabbitMQ is lost
 
         Note
@@ -150,6 +155,9 @@ class Consumer(object):
         if connection is not None:
             connection.add_on_close_callback(on_connection_closed)
         channel = yield Task(self._open_channel)
+        if qos:
+            channel.basic_qos(prefetch_count=qos)
+            print "****", qos
         logger.info("Channel to RabbitMQ consumer has been opened")
         self.channel = channel
         self.channel.add_on_close_callback(on_channel_closed)

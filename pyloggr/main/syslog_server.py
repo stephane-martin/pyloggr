@@ -25,6 +25,7 @@ from pyloggr.cache import cache
 logger = logging.getLogger(__name__)
 
 # todo: push unparsable messages to some special logfile
+# todo: refactor try_publish_again into an independent process
 
 
 class Clients(NotificationProducer):
@@ -36,6 +37,7 @@ class Clients(NotificationProducer):
     @classmethod
     def set_task_id(cls, task_id):
         """
+        :param task_id: process number
         :type task_id: int
         """
         cls.task_id = task_id
@@ -131,7 +133,9 @@ def bytes_to_event(bytes_event):
     """
     Parse some bytes into an :py:class:`pyloggr.event.Event` object
 
-    .. note:: We generate a HMAC for this new event
+    Note
+    ====
+    We generate a HMAC for this new event
 
     :param bytes_event: the event as bytes
     :type bytes_event: bytes
@@ -558,6 +562,14 @@ class SyslogConfig(object):
         return self.conf.get('ssl', None)
 
     def is_port_ssl(self, port):
+        """
+        Is the given port used for SSL connections ?
+        :param port: port
+        :type port: int
+        :return: True if port is used for SSL
+        :rtype: bool
+
+        """
         if 'ssl' not in self.conf:
             return False
         if self.conf['ssl'] is None:
@@ -573,6 +585,7 @@ class SyslogConfig(object):
     def bind_all_sockets(self):
         """
         Bind the sockets to the current server
+        :return: list of bound sockets
         :rtype: list
 
         """
