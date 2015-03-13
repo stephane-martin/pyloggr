@@ -53,8 +53,8 @@ class ExtendedField(Field):
 
     def apply(self, ev):
         assert(isinstance(ev, Event))
-        name = self.name.apply(ev) if isinstance(self.name, Constant) else self.name
-        return ev.fields_as_dict[name]
+        name = self.name.name if isinstance(self.name, Constant) else self.name
+        return ev.fields_as_dict.get(name, None)
 
 
 class PlainField(Field):
