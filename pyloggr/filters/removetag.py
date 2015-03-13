@@ -2,6 +2,8 @@
 __author__ = 'stef'
 
 class RemoveTagEngine(object):
+    thread_safe = True
+
     def __init__(self, directory):
         pass
 

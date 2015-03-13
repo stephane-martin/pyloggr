@@ -10,12 +10,14 @@ are used by the `parser` process.
 __author__ = 'stef'
 
 from os.path import join
+from threading import Lock
 
 from .filters_config import ConfigParser
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
 from .addtag import AddTagEngine
 from .removetag import RemoveTagEngine
+from .drop import DropException, DropEngine
 from ..event import Event
 
 
@@ -24,8 +26,11 @@ class Filters(object):
         'grok': GrokEngine,
         'geoip': GeoIPEngine,
         'addtag': AddTagEngine,
-        'removetag': RemoveTagEngine
+        'removetag': RemoveTagEngine,
+        'drop': DropEngine
     }
+
+    filters_locks = dict([(name, Lock()) for name in filters_modules])
 
     def __init__(self, config_directory):
         self.conf = ConfigParser().parse_config_file(join(config_directory, 'filters.conf'))
@@ -46,10 +51,15 @@ class Filters(object):
         :type ev: Event
         """
         for statement in self.conf:
+            print '*', statement.condition
             if statement.condition.apply(ev):
                 for action in statement.actions:
                     arguments = [arg.apply(ev) for arg in action.arguments]
-                    return_value = self._filters[action.name].apply(ev, arguments)
+                    if self._filters[action.name].thread_safe:
+                        return_value = self._filters[action.name].apply(ev, arguments)
+                    else:
+                        with self.filters_locks[action.name]:
+                            return_value = self._filters[action.name].apply(ev, arguments)
                     if not return_value:
                         break
 

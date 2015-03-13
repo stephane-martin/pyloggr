@@ -1,20 +1,16 @@
 # encoding: utf-8
 __author__ = 'stef'
 
+import re
 
-from os.path import join
-
-from pyparsing import Word, Keyword, Literal, Suppress, quotedString, pythonStyleComment, alphas, alphanums, Forward
-from pyparsing import Optional, Group, OneOrMore, delimitedList, ParseException
+from pyparsing import Word, Keyword, Literal, Suppress, quotedString, pythonStyleComment, alphas, alphanums
+from pyparsing import Optional, Group, OneOrMore, delimitedList, ParseException, operatorPrecedence, opAssoc
 from ast import literal_eval
 
 from future.utils import raise_from
 from future.builtins import str as text
 from ..event import Event
 from ..utils.fix_unicode import to_unicode
-
-# todo: implement 'not', 'notin', regexp predicate, startswith, endswith
-# todo: parenthesis should be optional, with precedence
 
 
 class Constant(object):
@@ -27,10 +23,12 @@ class Constant(object):
     def __repr__(self):
         return self.__str__()
 
+    # noinspection PyUnusedLocal
     def apply(self, ev):
         return self.name
 
 
+# noinspection PyUnusedLocal
 def quoted_string_to_constant(s, loc, toks):
     return Constant(literal_eval(toks[0]))
 
@@ -75,9 +73,26 @@ class Condition(object):
             return AndCondition(left, right)
         elif operande == "or":
             return OrCondition(left, right)
+        elif operande == "not":
+            return NotCondition(left)
 
     def apply(self, ev):
         raise NotImplementedError
+
+
+class NotCondition(Condition):
+    def __init__(self, left):
+        self.operand = "not"
+        self.left = left
+
+    def __str__(self):
+        return "NOT({})".format(self.left)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def apply(self, ev):
+        return not self.left.apply(ev)
 
 
 class AndCondition(Condition):
@@ -123,6 +138,12 @@ class Predicate(Condition):
             return Different(left, right)
         elif operation == 'in':
             return In(left, right)
+        elif operation == 'notin':
+            return Notin(left, right)
+        elif operation == '~':
+            return RegexpP(left, right)
+        elif operation == '~*':
+            return RegexpIP(left, right)
 
     def apply(self, ev):
         raise NotImplementedError
@@ -142,6 +163,36 @@ class Equals(Predicate):
     def apply(self, ev):
         assert(isinstance(ev, Event))
         return self.left.apply(ev) == self.right.apply(ev)
+
+
+class RegexpP(Predicate):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return "REGEXP({} ~ {})".format(self.left, self.right)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def apply(self, ev):
+        return re.search(self.right.apply(ev), self.left.apply(ev))
+
+
+class RegexpIP(Predicate):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return "REGEXP_I({} ~* {})".format(self.left, self.right)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def apply(self, ev):
+        return re.search(self.right.apply(ev), self.left.apply(ev), flags=re.IGNORECASE)
 
 
 class Different(Predicate):
@@ -182,6 +233,28 @@ class In(Predicate):
             raise ValueError
 
 
+class Notin(Predicate):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return "NOTIN({} notin {})".format(self.left, self.right)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def apply(self, ev):
+        assert(isinstance(ev, Event))
+        left = self.left if isinstance(self.left, text) else self.left.apply(ev)
+        if self.right == "tags":
+            return left not in ev.tags
+        elif self.right == "fields":
+            return left not in ev.fields_as_dict
+        else:
+            raise ValueError
+
+
 class Filter(object):
     def __init__(self, name, arguments=None):
         self.name = name.strip('" ')
@@ -198,17 +271,23 @@ class Filter(object):
         return Filter(toks[0], toks[1:])
 
 
-def make_condition(s, loc, toks):
-    if len(toks[0]) == 1:
-        return toks[0][0]
-    else:
-        return Condition.factory(toks[0][1], toks[0][0], toks[0][2])
+def make_condition(toks):
+    toks = toks[0]
+    if len(toks) == 3:
+        return Condition.factory(toks[1], toks[0], toks[2])
+    elif len(toks) == 2:
+        return Condition.factory(toks[0], toks[1], None)
 
+
+# noinspection PyUnusedLocal
 def make_filter(s, loc, toks):
     return Filter.from_tokens(toks)
 
+
+# noinspection PyUnusedLocal
 def make_plain_field(s, loc, toks):
     return PlainField(toks[0])
+
 
 class ConfigParser(object):
 
@@ -228,22 +307,27 @@ class ConfigParser(object):
         geoip           = Keyword("geoip")
         grok            = Keyword("grok")
         addtag          = Keyword("addtag")
+        removetag       = Keyword("removetag")
+        drop            = Keyword("drop")
 
         and_operand     = Keyword('and')
         or_operand      = Keyword('or')
+        not_operand     = Keyword('not')
 
         equals          = Literal('==')
         different       = Literal('!=')
         in_op           = Keyword('in')
+        notin_op        = Keyword('notin')
+        regexp_op       = Literal('~')
+        regexp_i_op     = Literal('~*')
 
         open_par        = Suppress(Literal('('))
         close_par       = Suppress(Literal(')'))
 
-        operand = and_operand | or_operand
+        my_qs = quotedString.setParseAction(quoted_string_to_constant)
+        label = Word(initChars=alphas, bodyChars=alphanums + "_")
 
-        my_qs = (quotedString).setParseAction(quoted_string_to_constant)
-        label = Word(initChars=alphas, bodyChars=alphanums+"_")
-
+        # noinspection PyUnresolvedReferences
         plain_field = self.severity | self.facility | self.app_name | self.source | self.programname | self.syslogtag \
                       | self.message | self.uuid | self.timereported | self.timegenerated | self.trusted_comm \
                       | self.trusted_exe | self.trusted_cmdline
@@ -253,43 +337,57 @@ class ConfigParser(object):
             lambda s, loc, toks: ExtendedField(toks[1])
         )
 
-        filter_name = (geoip | grok | addtag)
+        filter_name = (geoip | grok | addtag | removetag | drop)
 
         comment_line = pythonStyleComment
 
         equals_predicate = (
-            open_par
-            + (plain_field | extended_field | my_qs)
+            (plain_field | extended_field | my_qs)
             + equals
             + (plain_field | extended_field | my_qs)
-            + close_par
         )
 
         different_predicate = (
-            open_par
-            + (plain_field | extended_field | my_qs)
+            (plain_field | extended_field | my_qs)
             + different
             + (plain_field | extended_field | my_qs)
-            + close_par
         )
 
         in_predicate = (
-            open_par
-            + (my_qs | label)
+            (my_qs | label)
             + in_op
             + (tags | fields)
-            + close_par
         )
 
-        predicate = (equals_predicate | different_predicate | in_predicate).setParseAction(
+        notin_predicate = (
+            (my_qs | label)
+            + notin_op
+            + (tags | fields)
+        )
+
+        regexp_predicate = (
+            (plain_field | extended_field)
+            + regexp_op
+            + my_qs
+        )
+
+        regexpi_predicate = (
+            (plain_field | extended_field)
+            + regexp_i_op
+            + my_qs
+        )
+
+        predicate = (equals_predicate | different_predicate | in_predicate | notin_predicate | regexp_predicate | regexpi_predicate).setParseAction(
             lambda s, loc, toks: Predicate.factory(toks[1], toks[0], toks[2])
         )
 
-        condition = Forward()
-        condition << Group(
-            predicate |
-            (open_par + condition.setParseAction(make_condition) + operand +
-             condition.setParseAction(make_condition) + close_par)
+        condition = operatorPrecedence(
+            predicate,
+            [
+                (not_operand, 1, opAssoc.RIGHT, make_condition),
+                (and_operand, 2, opAssoc.LEFT, make_condition),
+                (or_operand, 2, opAssoc.LEFT, make_condition),
+            ]
         )
         condition = condition.setResultsName('condition')
 
@@ -311,5 +409,6 @@ class ConfigParser(object):
         with open(filter_config_filename, 'rb') as handle:
             s = handle.read()
         s = to_unicode(s)
-        return self.parse_string(s)
-
+        res = self.parse_string(s)
+        print res
+        return res

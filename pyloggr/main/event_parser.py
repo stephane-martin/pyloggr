@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from ..rabbitmq import RabbitMQConnectionError
 from ..rabbitmq.publisher import Publisher
 from ..rabbitmq.consumer import Consumer
+from pyloggr.filters import DropException
 from ..event import Event, ParsingError, InvalidSignature
 from ..config import SLEEP_TIME
 
@@ -23,6 +24,9 @@ class EventParser(object):
     """
 
     def __init__(self, from_rabbitmq_config, to_rabbitmq_config, filters):
+        """
+        :type filters: pyloggr.filters.Filters
+        """
         self.from_rabbitmq_config = from_rabbitmq_config
         self.to_rabbitmq_config = to_rabbitmq_config
         self.filters = filters
@@ -131,11 +135,17 @@ class EventParser(object):
         except ParsingError:
             logger.warning("Dropping one unparsable event")
             return message, None
+
         try:
             ev.verify_hmac()
         except InvalidSignature:
             logger.critical("Dropping one tampered event")
             return message, None
-        # todo: should we put a threading lock here ?
-        ev.apply_filters(self.filters)
+
+        try:
+            self.filters.apply(ev)
+        except DropException:
+            logger.debug("DROP filter!")
+            return message, None
+
         return message, ev

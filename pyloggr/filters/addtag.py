@@ -4,6 +4,7 @@ __author__ = 'stef'
 from ..event import Event
 
 class AddTagEngine(object):
+    thread_safe = True
     def __init__(self, directory):
         pass
 

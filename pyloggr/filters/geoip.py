@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class GeoIPEngine(object):
+    thread_safe = False
+
     def __init__(self, directory):
         geoip_conf_dir = join(directory, 'geoip')
         fname = join(geoip_conf_dir, RELATIVE_GEOLITE_FILENAME)

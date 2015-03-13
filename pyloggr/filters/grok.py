@@ -48,6 +48,8 @@ class PatternNode(object):
 
 
 class GrokEngine(object):
+    thread_safe = True
+
     def __init__(self, config_dir):
         self._raw_patterns = dict()
         self._pattern_nodes = dict()
@@ -144,7 +146,6 @@ class GrokEngine(object):
         return None, None
 
     def apply(self, ev, patterns):
-        # search should be thread safe, but are we sure ?
         (pattern_name, new_fields) = self.search(ev.message, patterns)
         if new_fields:
             ev.update(new_fields)
