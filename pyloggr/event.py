@@ -469,17 +469,19 @@ class Event(object):
         if match_obj:
             self.message = match_obj.group(1).strip()
             s = match_obj.group(2).strip()
-            trusted_fields = RE_TRUSTED_FIELDS.match(s).groupdict().values()
-            for f in trusted_fields:
-                try:
-                    f_name, f_content = f.split('=', 1)
-                except ValueError:
-                    pass
-                else:
-                    f_name = to_unicode(f_name.strip())
-                    if f_name in TRUSTED_FIELDS_MAP:
-                        f_name = TRUSTED_FIELDS_MAP[f_name]
-                        self.__setattr__(f_name, f_content.strip(' "\''))
+            trusted_fields_match = RE_TRUSTED_FIELDS.match(s)
+            if trusted_fields_match:
+                for f in trusted_fields_match.groupdict().values():
+                    if f is not None:
+                        try:
+                            f_name, f_content = f.split('=', 1)
+                        except (ValueError, AttributeError):
+                            pass
+                        else:
+                            f_name = to_unicode(f_name.strip())
+                            if f_name in TRUSTED_FIELDS_MAP:
+                                f_name = TRUSTED_FIELDS_MAP[f_name]
+                                self.__setattr__(f_name, f_content.strip(' "\''))
 
     @classmethod
     def _load_dictionnary(cls, d):

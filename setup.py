@@ -56,7 +56,7 @@ setup(
     url='https://github.com/stephane-martin/pyloggr',
     packages=find_packages(exclude=['tests']),
     setup_requires=[
-        'setuptools_git', 'setuptools', 'twine', 'wheel', 'Mock'
+        'setuptools_git', 'setuptools', 'twine', 'wheel', 'mock'
     ],
     include_package_data=True,
     install_requires=requirements,

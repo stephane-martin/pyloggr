@@ -410,5 +410,4 @@ class ConfigParser(object):
             s = handle.read()
         s = to_unicode(s)
         res = self.parse_string(s)
-        print res
         return res

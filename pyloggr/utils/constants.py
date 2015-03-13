@@ -7,7 +7,7 @@ import regex
 RE_MSG_W_TRUSTED = re.compile(r'\A(.*)\s+@\[(.*)\]\s*\Z', flags=re.DOTALL | re.MULTILINE)
 TRUSTED_LABELS = r'(_PID|_UID|_GID|_COMM|_EXE|_CMDLINE)'
 RE_TRUSTED_FIELDS = re.compile(
-    r'\A(?P<u1>{}=.*)\s(?P<u2>{}=.*)\s(?P<u3>{}=.*)\s(?P<u4>{}=.*)\s(?P<u5>{}=.*)\s(?P<u6>{}=.*)\Z'.format(
+    r'\A(?P<u1>{}=.*?)(\s(?P<u2>{}=.*?))?(\s(?P<u3>{}=.*?))?(\s(?P<u4>{}=.*?))?(\s(?P<u5>{}=.*?))?(\s(?P<u6>{}=.*?))?\Z'.format(
         TRUSTED_LABELS, TRUSTED_LABELS, TRUSTED_LABELS, TRUSTED_LABELS, TRUSTED_LABELS, TRUSTED_LABELS
     )
 )
