@@ -5,6 +5,7 @@ import logging
 
 from tornado.gen import coroutine
 from tornado.ioloop import IOLoop
+from concurrent.futures import ThreadPoolExecutor
 
 from ..rabbitmq import RabbitMQConnectionError
 from ..rabbitmq.publisher import Publisher
@@ -29,6 +30,7 @@ class EventParser(object):
         self.publisher = None
         self._publisher_later = None
         self.shutting_down = None
+        self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config['qos'] + 5)
 
     @coroutine
     def start(self):
@@ -74,26 +76,36 @@ class EventParser(object):
             if (not self.consumer) or self.shutting_down:
                 break
             message = yield message_queue.get()
-            try:
-                ev = Event.load(message.body)
-            except ParsingError:
-                logger.warning("Dropping one unparsable event")
-                continue
-            # todo: verify HMAC and apply filters in a back thread
-            try:
-                ev.verify_hmac()
-            except InvalidSignature:
-                logger.critical("Dropping one tampered event")
-                continue
-            ev.apply_filters(self.filters)
-            res = yield self.publisher.publish(
-                exchange=self.to_rabbitmq_config['exchange'],
-                body=ev.dumps()
-            )
-            if res:
-                message.ack()
-            else:
-                message.nack()
+            # todo: is apply_filters thread safe?
+            future = self.executor.submit(self.apply_filters, message)
+            IOLoop.instance().add_future(future, self._publish)
+            # ev = self.apply_filters(message)
+            # if ev is None:
+            #     continue
+            # res = yield self.publisher.publish(
+            #     exchange=self.to_rabbitmq_config['exchange'],
+            #     body=ev.dumps()
+            # )
+            # if res:
+            #     message.ack()
+            # else:
+            #     message.nack()
+
+    @coroutine
+    def _publish(self, future):
+        message, ev = future.result()
+        if ev is None:
+            # todo: instead of dropping the offending event, log it somewhere
+            message.ack()
+            return
+        res = yield self.publisher.publish(
+            exchange=self.to_rabbitmq_config['exchange'],
+            body=ev.dumps()
+        )
+        if res:
+            message.ack()
+        else:
+            message.nack()
 
     def stop(self):
         """
@@ -112,3 +124,18 @@ class EventParser(object):
         """
         self.shutting_down = True
         self.stop()
+
+    def apply_filters(self, message):
+        try:
+            ev = Event.load(message.body)
+        except ParsingError:
+            logger.warning("Dropping one unparsable event")
+            return message, None
+        try:
+            ev.verify_hmac()
+        except InvalidSignature:
+            logger.critical("Dropping one tampered event")
+            return message, None
+        # todo: should we put a threading lock here ?
+        ev.apply_filters(self.filters)
+        return message, ev

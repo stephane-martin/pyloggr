@@ -75,6 +75,7 @@ class PgsqlShipper(object):
 
     @coroutine
     def _get_db_pool(self):
+        # we try to connect to PGSQL in a thread, because timeouts can block
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             self.db_pool = yield executor.submit(

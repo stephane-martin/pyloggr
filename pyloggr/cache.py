@@ -79,7 +79,6 @@ class SyslogCache(object):
 
         self.redis_conn.hset(self.hash_name, 'status', str(new_status))
 
-
     @property
     def clients(self):
         buf = self.redis_conn.hget(self.hash_name, 'clients')
@@ -132,10 +131,9 @@ class SyslogServerList(object):
         return iter(res)
 
 
-
 class Cache(object):
     """
-    Cache class abstracts storage and retrieve from redis.
+    Cache class abstracts storage and retrieval from redis.
 
     Attributes
     ----------
@@ -147,7 +145,7 @@ class Cache(object):
     _temp_redis_output_file = None
 
     def __init__(self):
-        self.syslog_status = dict()
+        self._rescue = None
 
     @classmethod
     def _connect_to_redis(cls):
@@ -201,26 +199,15 @@ class Cache(object):
         cls.redis_child.terminate()
         cls.redis_child = None
 
-
     @property
     def syslog(self):
         return SyslogServerList(self.redis_conn)
 
-    # todo: rescue queue should have a queue interface
-
-    def save_in_rescue(self, bytes_event):
-        try:
-            self.redis_conn.rpush(rescue_key, bytes_event)
-        except RedisError:
-            return None
-        return True
-
     @property
-    def rescue_queue_length(self):
-        try:
-            return self.redis_conn.llen(rescue_key)
-        except RedisError:
-            return None
+    def rescue(self):
+        if self._rescue is None:
+            self._rescue = RescueQueue(self.redis_conn)
+        return self._rescue
 
     @property
     def available(self):
@@ -230,7 +217,28 @@ class Cache(object):
             return False
         return True
 
-    def rescue_queue_generator(self):
+
+class RescueQueue(object):
+    def __init__(self, redis_conn):
+        """
+        :type redis_conn: StrictRedis
+        """
+        self.redis_conn = redis_conn
+
+    def append(self, bytes_ev):
+        try:
+            self.redis_conn.rpush(rescue_key, bytes_ev)
+        except RedisError:
+            return False
+        return True
+
+    def __len__(self):
+        try:
+            return self.redis_conn.llen(rescue_key)
+        except RedisError:
+            return None
+
+    def get_generator(self):
         try:
             next_ev = self.redis_conn.lpop(rescue_key)
             if next_ev is None:
@@ -238,5 +246,6 @@ class Cache(object):
             yield next_ev
         except RedisError:
             raise StopIteration
+
 
 cache = Cache()

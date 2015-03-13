@@ -1,4 +1,6 @@
 # encoding: utf-8
+
+
 __author__ = 'stef'
 
 import socket
@@ -8,16 +10,16 @@ import logging
 import uuid
 import errno
 
-from tornado.gen import coroutine, Return, sleep
-from tornado.ioloop import IOLoop, PeriodicCallback
+from tornado.gen import coroutine, Return
+from tornado.ioloop import IOLoop
 from tornado.tcpserver import TCPServer
 from tornado.netutil import bind_unix_socket, ssl_wrap_socket, errno_from_exception, bind_sockets
 from tornado.iostream import SSLIOStream, StreamClosedError
+# noinspection PyPackageRequirements
 from past.builtins import basestring
 
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
-from pyloggr.utils.fix_unicode import to_unicode
 from pyloggr.config import SLEEP_TIME
 from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
@@ -25,7 +27,6 @@ from pyloggr.cache import cache
 logger = logging.getLogger(__name__)
 
 # todo: push unparsable messages to some special logfile
-# todo: refactor try_publish_again into an independent process
 
 
 class Clients(NotificationProducer):
@@ -95,70 +96,12 @@ class Clients(NotificationProducer):
 clients = Clients()
 
 
-@coroutine
-def publish_syslog_event(rabbitmq_connection, exchange, event, routing_key='', persistent=True):
-    """
-    publish_syslog_event(rabbitmq_connection, exchange, event, routing_key='', persistent=True)
-    Publish an Event object in RabbitMQ
-
-    :param rabbitmq_connection: RabbitMQ connection
-    :type rabbitmq_connection: Publisher
-    :param exchange: RabbitMQ exchange
-    :type exchange: str
-    :param event: Event object
-    :type event: Event
-    :param routing_key: RabbitMQ routing key
-    :type routing_key: str
-    :param persistent: Should the event be saved on disk by RabbitMQ
-    :type persistent: bool
-
-    Note
-    ====
-    Tornado coroutine
-    """
-    json_event = event.dumps()
-    logger.debug(json_event)
-    # publish the event in RabbitMQ in JSON format
-    result = yield rabbitmq_connection.publish(
-        exchange=exchange,
-        body=json_event,
-        routing_key=routing_key,
-        message_id=event.uuid,
-        persistent=persistent
-    )
-    raise Return(result)
-
-
-def bytes_to_event(bytes_event):
-    """
-    Parse some bytes into an :py:class:`pyloggr.event.Event` object
-
-    Note
-    ====
-    We generate a HMAC for this new event
-
-    :param bytes_event: the event as bytes
-    :type bytes_event: bytes
-    :return: Event object
-    :raise ParsingError: if bytes could not be parsed correctly
-    """
-    try:
-        event = Event.load(bytes_event)
-    except ParsingError:
-        logger.warning(u"Pyloggr syslog server: could not unmarshall a syslog event")
-        logger.debug(to_unicode(bytes_event))
-        raise
-    else:
-        event.generate_hmac()
-        return event
-
-
 class SyslogClientConnection(object):
     """
     Encapsulates a connection with a syslog client
     """
 
-    def __init__(self, stream, address, syslog_config, rabbitmq_config, rabbitmq_connection):
+    def __init__(self, stream, address, syslog_config, rabbitmq_config, publisher):
         """
         :type syslog_config: SyslogConfig
         """
@@ -172,7 +115,7 @@ class SyslogClientConnection(object):
         self.stream.set_close_callback(self.on_disconnect)
         self.client_id = str(uuid.uuid4())
         self.rabbitmq_config = rabbitmq_config
-        self.rabbitmq_connection = rabbitmq_connection
+        self.publisher = publisher
 
         self.client_host = ''
         self.client_port = None
@@ -230,13 +173,12 @@ class SyslogClientConnection(object):
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from TCP client {}:{}".format(self.client_host, self.client_port))
-            event = bytes_to_event(bytes_event)
+            event = Event.parse_bytes_to_event(bytes_event)
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
             self.nb_messages_received += 1
 
-            status = yield publish_syslog_event(
-                rabbitmq_connection=self.rabbitmq_connection,
+            status = yield self.publisher.publish_event(
                 exchange=self.rabbitmq_config['exchange'],
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
@@ -245,7 +187,7 @@ class SyslogClientConnection(object):
                 self.nb_messages_transmitted += 1
             else:
                 logger.warning("RabbitMQ publisher said NACK :(")
-                if cache.save_in_rescue(bytes_event):
+                if cache.rescue.append(bytes_event):
                     logger.info("Published in RabbitMQ failed, but we pushed the event in the rescue queue")
                 else:
                     logger.error("Failed to save event in redis. Event has been lost")
@@ -267,14 +209,13 @@ class SyslogClientConnection(object):
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from RELP client {}:{}".format(self.client_host, self.client_port))
-            event = bytes_to_event(bytes_event)
+            event = Event.parse_bytes_to_event(bytes_event)
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
 
             self.nb_messages_received += 1
 
-            status = yield publish_syslog_event(
-                rabbitmq_connection=self.rabbitmq_connection,
+            status = yield self.publisher.publish_event(
                 exchange=self.rabbitmq_config['exchange'],
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
@@ -556,7 +497,6 @@ class SyslogConfig(object):
 
         self.list_of_sockets = list()
 
-
     @property
     def ssl(self):
         return self.conf.get('ssl', None)
@@ -628,16 +568,16 @@ class SyslogServer(TCPServer, NotificationProducer):
         self.task_id = task_id
         Clients.set_task_id(task_id)
 
-        self.rabbitmq_connection = None
+        self.publisher = None
         self._connect_rabbitmq_later = None
-        self.running = False
+        self.listening = False
+        self.shutting_down = False
 
         self._reset()
 
     def _reset(self):
-        self.running = False
-        self.periodic_queue_saving = None
-        self.rabbitmq_connection = None
+        self.listening = False
+        self.publisher = None
         self._connect_rabbitmq_later = None
 
     def _cancel_connect_later(self):
@@ -646,6 +586,12 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         if self._connect_rabbitmq_later is not None:
             IOLoop.instance().remove_timeout(self._connect_rabbitmq_later)
+            self._connect_rabbitmq_later = None
+
+    def connect_later(self):
+        if self._connect_rabbitmq_later is None and not self.shutting_down:
+            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
+            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
 
     @coroutine
     def launch(self):
@@ -660,103 +606,40 @@ class SyslogServer(TCPServer, NotificationProducer):
         Tornado coroutine
 
         """
-        self.rabbitmq_connection = Publisher(self.rabbitmq_config)
+        self.publisher = Publisher(self.rabbitmq_config)
         try:
-            rabbit_close_ev = yield self.rabbitmq_connection.start()
+            rabbit_close_ev = yield self.publisher.start()
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
-            self.rabbitmq_connection = None
-            self.shutdown()
-            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
-        else:
-            clients.register_queue(self.rabbitmq_connection)
-            self.register_queue(self.rabbitmq_connection)
-            if not self.running:
-                yield self._start_syslog()
-            # the next yield only returns if rabbitmq connection has been lost
-            yield rabbit_close_ev.wait()
-            # don't notify to RabbitMQ... as we lost connection
-            clients.unregister_queue()
-            self.unregister_queue()
-            if not self.rabbitmq_connection.shutting_down:
-                # let's stop the service
-                self.rabbitmq_connection = None
-                self.shutdown()
-                logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-                self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
+            yield self.stop_all()
+            self.connect_later()
+            return
+
+        clients.register_queue(self.publisher)
+        self.register_queue(self.publisher)
+        yield self._start_syslog()
+        # the next yield only returns if rabbitmq connection has been lost
+        yield rabbit_close_ev.wait()
+        # don't notify to RabbitMQ... as we lost the connection to it
+        clients.unregister_queue()
+        self.unregister_queue()
+        yield self.stop_all()
+        self.connect_later()
 
     @coroutine
     def _start_syslog(self):
         """
         Start to listen for syslog connections
         """
-        self.add_sockets(self.syslog_config.list_of_sockets)
+        if not self.listening:
+            self.listening = True
+            self.add_sockets(self.syslog_config.list_of_sockets)
 
-        self.running = True
-        cache.syslog[self.task_id].status = True
-
-        self._start_periodic()
-        yield self.notify_observers(
-            {'action': 'add_server', 'ports': self.syslog_config.port_to_protocol.keys(), 'id': self.task_id},
-            'pyloggr.syslog.servers'
-        )
-
-    def _start_periodic(self):
-        """
-        Every minute we check if there are some events in the rescue queue
-        """
-        if self.periodic_queue_saving is None:
-            self.periodic_queue_saving = PeriodicCallback(
-                callback=self._try_publish_again,
-                callback_time=1000 * 60
+            cache.syslog[self.task_id].status = True
+            yield self.notify_observers(
+                {'action': 'add_server', 'ports': self.syslog_config.port_to_protocol.keys(), 'id': self.task_id},
+                'pyloggr.syslog.servers'
             )
-            self.periodic_queue_saving.start()
-
-    def _stop_periodic(self):
-        """
-        Stop the periodic check
-        """
-        if self.periodic_queue_saving:
-            if self.periodic_queue_saving.is_running:
-                self.periodic_queue_saving.stop()
-            self.periodic_queue_saving = None
-
-    @coroutine
-    def _try_publish_again(self):
-        """
-        _try_publish_again()
-        Check the rescue queue, try to publish events in RabbitMQ if we find some of them
-
-        Note
-        ====
-        Tornado coroutine
-        """
-        nb_events = cache.rescue_queue_length
-        if nb_events is None:
-            logger.info("Rescue queue: can't connect to Redis")
-            return
-
-        logger.info("{} elements in the rescue queue".format(nb_events))
-        if nb_events == 0:
-            return
-
-        publish_futures = dict()
-        for bytes_event in cache.rescue_queue_generator():
-            try:
-                event = bytes_to_event(bytes_event)
-            except ParsingError:
-                # we silently drop the unparsable event
-                logger.debug("Rescue queue: dropping one unparsable event")
-                continue
-
-            publish_futures[bytes_event] = publish_syslog_event(
-                self.rabbitmq_connection, self.rabbitmq_config['exchange'], event
-            )
-
-        results = yield publish_futures
-        failed_events = [bytes_event for (bytes_event, ack) in results.items() if not ack]
-        map(cache.save_in_rescue, failed_events)
 
     @coroutine
     def handle_stream(self, stream, address):
@@ -778,7 +661,7 @@ class SyslogServer(TCPServer, NotificationProducer):
             address=address,
             syslog_config=self.syslog_config,
             rabbitmq_config=self.rabbitmq_config,
-            rabbitmq_connection=self.rabbitmq_connection,
+            publisher=self.publisher,
         )
         yield connection.on_connect()
 
@@ -791,8 +674,8 @@ class SyslogServer(TCPServer, NotificationProducer):
         ====
         Tornado coroutine
         """
-        if self.running:
-            self.running = False
+        if self.listening:
+            self.listening = False
             logger.info("Closing RELP clients connections")
             for client in clients.values():
                 client.stream.close()
@@ -803,12 +686,10 @@ class SyslogServer(TCPServer, NotificationProducer):
                 'action': 'remove_server', 'subject': 'pyloggr.syslog.servers', 'id': self.task_id
             })
 
-        self._stop_periodic()
-
     @coroutine
-    def shutdown(self):
+    def stop_all(self):
         """
-        Shutdowns completely the server. Stop listening for syslog clients. Close connection to RabbitMQ.
+        Stops completely the server. Stop listening for syslog clients. Close connection to RabbitMQ.
 
         Note
         ====
@@ -816,13 +697,18 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         yield self._stop_syslog()
         del cache.syslog[self.task_id]
-        self._cancel_connect_later()
         clients.unregister_queue()
-        if self.rabbitmq_connection:
-            self.rabbitmq_connection.stop()
-            self.rabbitmq_connection = None
+        if self.publisher:
+            self.publisher.stop()
+            self.publisher = None
 
         self._reset()
+
+    @coroutine
+    def shutdown(self):
+        self.shutting_down = True
+        self._cancel_connect_later()
+        yield self.stop_all()
 
     def _handle_connection(self, connection, address):
         """
@@ -846,14 +732,14 @@ class SyslogServer(TCPServer, NotificationProducer):
                 return connection.close()
             else:
                 raise
-        except IOError as err:
-            logger.error("IOError happened when client connected with TLS. Check the SSL configuration")
-            return connection.close()
         except socket.error as err:
             if errno_from_exception(err) in (errno.ECONNABORTED, errno.EINVAL):
                 return connection.close()
             else:
                 raise
+        except IOError:
+            logger.error("IOError happened when client connected with TLS. Check the SSL configuration")
+            return connection.close()
 
         try:
             stream = SSLIOStream(

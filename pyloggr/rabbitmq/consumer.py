@@ -14,8 +14,6 @@ from . import RabbitMQConnectionError
 
 logger = logging.getLogger(__name__)
 
-# todo: implement rabbitmq qos
-
 
 class RabbitMQMessage(object):
     """
@@ -157,7 +155,6 @@ class Consumer(object):
         channel = yield Task(self._open_channel)
         if qos:
             channel.basic_qos(prefetch_count=qos)
-            print "****", qos
         logger.info("Channel to RabbitMQ consumer has been opened")
         self.channel = channel
         self.channel.add_on_close_callback(on_channel_closed)
@@ -238,9 +235,11 @@ class Consumer(object):
         """
         logger.debug('Consumer: received message # %s from %s', basic_deliver.delivery_tag, properties.app_id)
 
-        self.message_queue.put_nowait(RabbitMQMessage(
-            basic_deliver.delivery_tag, properties, body, self.channel
-        ))
+        self.message_queue.put_nowait(
+            RabbitMQMessage(
+                basic_deliver.delivery_tag, properties, body, self.channel
+            )
+        )
 
     def stop_consuming(self):
         """

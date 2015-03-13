@@ -9,12 +9,11 @@ EventSchema is used for marshalling/unmarshalling of Event objects.
 __author__ = 'stef'
 
 
-import shlex
 import logging
 from base64 import b64encode, b64decode
 from datetime import datetime
 import ujson
-
+from arrow import Arrow
 from marshmallow import Schema, fields
 from marshmallow.exceptions import UnmarshallingError
 from future.utils import python_2_unicode_compatible, raise_from
@@ -23,13 +22,13 @@ from builtins import str as text
 import past.builtins
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import hmac as HMAC
+from cryptography.hazmat.primitives import hmac as hmac_func
 from cryptography.exceptions import InvalidSignature
 from dateutil.tz import tzutc
 from psycopg2.extras import Json
 
 from .utils.fix_unicode import to_unicode
-from .utils.constants import REGEXP_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG
+from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
 from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
 from .config import HMAC_KEY
 
@@ -63,7 +62,6 @@ class CFieldSchema(Schema):
             return None
         return CField(**data)
 
-from arrow import Arrow
 
 class EventSchema(Schema):
     """
@@ -96,18 +94,21 @@ class EventSchema(Schema):
     trusted_exe = fields.String(required=False)
     trusted_cmdline = fields.String(required=False)
     cfields = fields.Nested(CFieldSchema, allow_null=True, many=True, default=list())
+    # noinspection PyTypeChecker
     tags = fields.List(fields.String, allow_none=False, default=list())
 
     def make_object(self, data):
         return Event(**data)
 
 
+# noinspection PyUnusedLocal
 @EventSchema.data_handler
 def handle_version(serializer, data, o):
     data['@version'] = 1
     return data
 
 
+# noinspection PyUnusedLocal
 @EventSchema.data_handler
 def handle_numeric(serializer, data, o):
     data['procid'] = None if o.procid is None else o.procid
@@ -117,6 +118,7 @@ def handle_numeric(serializer, data, o):
     return data
 
 
+# noinspection PyUnusedLocal
 @EventSchema.preprocessor
 def handle_non_numeric_procid(schema, data):
     data['procid'] = data['procid'].replace('-', '').strip()
@@ -154,7 +156,6 @@ class CField(object):
     def __repr__(self):
         return self.str()
 
-# todo: delete iut field
 
 @python_2_unicode_compatible
 class Event(object):
@@ -185,6 +186,9 @@ class Event(object):
     cfields: list of CField
     tags: set of str
 
+    Todo
+    ====
+    delete iut field ?
 
     """
     schema = EventSchema()
@@ -289,7 +293,7 @@ class Event(object):
         return cmp(self.timegenerated, other.timegenerated)
 
     def _hmac(self):
-        h = HMAC.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
+        h = hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
         h.update(self.severity.encode("utf-8"))
         h.update(self.facility.encode("utf-8"))
         h.update(self.app_name.encode("utf-8"))
@@ -459,15 +463,13 @@ class Event(object):
         """
         Parse the "trusted fields" that rsyslog could have generated
         """
-        match_obj = REGEXP_TRUSTED.match(self.message)
+        # ex: @[_PID=5096 _UID=0 _GID=1000 _COMM=sudo test _EXE=/usr/bin/sudo test _CMDLINE="sudo test ls "]
+
+        match_obj = RE_MSG_W_TRUSTED.match(self.message)
         if match_obj:
             self.message = match_obj.group(1).strip()
-            # sometimes shlex can't handle unicode
             s = match_obj.group(2).strip()
-            if isinstance(s, text):
-                s = s.encode('utf-8')
-            # todo: better and safer parsing of trusted fields
-            trusted_fields = shlex.split(s)
+            trusted_fields = RE_TRUSTED_FIELDS.match(s).groupdict().values()
             for f in trusted_fields:
                 try:
                     f_name, f_content = f.split('=', 1)
@@ -477,7 +479,7 @@ class Event(object):
                     f_name = to_unicode(f_name.strip())
                     if f_name in TRUSTED_FIELDS_MAP:
                         f_name = TRUSTED_FIELDS_MAP[f_name]
-                        self.__setattr__(f_name, to_unicode(f_content.strip()))
+                        self.__setattr__(f_name, f_content.strip(' "\''))
 
     @classmethod
     def _load_dictionnary(cls, d):
@@ -592,6 +594,30 @@ class Event(object):
                 return cls._load_json(s)
         else:
             raise ValueError(u"s must be a dict or a basestring")
+
+    @classmethod
+    def parse_bytes_to_event(cls, bytes_ev):
+        """
+        Parse some bytes into an :py:class:`pyloggr.event.Event` object
+
+        Note
+        ====
+        We generate a HMAC for this new event
+
+        :param bytes_ev: the event as bytes
+        :type bytes_ev: bytes
+        :return: Event object
+        :raise ParsingError: if bytes could not be parsed correctly
+        """
+        try:
+            event = cls.load(bytes_ev)
+        except ParsingError:
+            logger.warning(u"Could not unmarshall a syslog event")
+            logger.debug(to_unicode(bytes_ev))
+            raise
+        else:
+            event.generate_hmac()
+            return event
 
     @classmethod
     def _load_json(cls, json_encoded):

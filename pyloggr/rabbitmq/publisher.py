@@ -38,7 +38,6 @@ class Publisher(object):
         self._delivery_tag = 0
         self._ack = 0
         self._nack = 0
-        self._confirmation_callbacks = {}
         self.futures_ack = dict()
 
     def _open_channel(self, callback=None):
@@ -67,6 +66,7 @@ class Publisher(object):
 
         ev = Event()
 
+        # noinspection PyUnusedLocal
         def on_connection_close(conn, reply_code, reply_text):
             logger.info("Connection to RabbitMQ publisher has been closed")
             self.connection = None
@@ -78,6 +78,7 @@ class Publisher(object):
                 # unexpected connection closed, let's notify the client
                 ev.set()
 
+        # noinspection PyUnusedLocal
         def on_channel_close(chan, reply_code, reply_text):
             logger.info("Channel to RabbitMQ publisher has been closed")
             self._reset_counters()
@@ -179,6 +180,39 @@ class Publisher(object):
         del self.futures_ack[tag]
         raise Return(res)
 
+
+    @coroutine
+    def publish_event(self, exchange, event, routing_key='', persistent=True):
+        """
+        publish_event(exchange, event, routing_key='', persistent=True)
+        Publish an Event object in RabbitMQ
+
+        :param exchange: RabbitMQ exchange
+        :type exchange: str
+        :param event: Event object
+        :type event: pyloggr.event.Event
+        :param routing_key: RabbitMQ routing key
+        :type routing_key: str
+        :param persistent: Should the event be saved on disk by RabbitMQ
+        :type persistent: bool
+
+        Note
+        ====
+        Tornado coroutine
+        """
+        json_event = event.dumps()
+        logger.debug(json_event)
+        # publish the event in RabbitMQ in JSON format
+        result = yield self.publish(
+            exchange=exchange,
+            body=json_event,
+            routing_key=routing_key,
+            message_id=event.uuid,
+            persistent=persistent
+        )
+        raise Return(result)
+
+
     def _on_delivery_confirmation(self, method_frame):
         confirmation_type = method_frame.method.NAME.split('.')[1].lower()
         tag = method_frame.method.delivery_tag
@@ -187,7 +221,7 @@ class Publisher(object):
         if confirmation_type == 'ack':
             if multiple:
                 logger.info("Publisher: Multiple ACK up to tag: {}".format(tag))
-                all_confirmed_tags = [t for t in self._confirmation_callbacks.keys() if t <= tag]
+                all_confirmed_tags = [t for t, f in self.futures_ack.items() if t <= tag and not f.done()]
                 for t in all_confirmed_tags:
                     self.futures_ack[t].set_result(True)
                 self._ack += len(all_confirmed_tags)

@@ -15,7 +15,7 @@ from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, LOGGING_CONFIG, CON
 from pyloggr.config import FROM_PARSER_TO_RABBITMQ_CONFIG, FROM_RABBITMQ_TO_PARSER_CONFIG
 from pyloggr.main.event_parser import EventParser
 from pyloggr.filters import Filters
-from pyloggr.cache import cache
+from pyloggr.cache import cache, CacheError
 
 
 PARSER_LOGGING_FILENAME = "/tmp/parser.log"
@@ -66,7 +66,11 @@ def start_parser():
 
 
 def main():
-    cache.initialize()
+    try:
+        cache.initialize()
+    except CacheError as err:
+        logger.error(err)
+        return
 
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)

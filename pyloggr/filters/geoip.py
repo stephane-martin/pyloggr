@@ -26,7 +26,8 @@ class GeoIPEngine(object):
     def open(self):
         if self.reader is None:
             logger.info("Initialize GeoIP database")
-            self.reader = geoip2.database.Reader(self.fname)
+            # MODE_MMAP: load the geoip database in memory
+            self.reader = geoip2.database.Reader(self.fname, mode=geoip2.database.MODE_MMAP)
 
     def locate(self, ip_address):
         if self.reader is None:

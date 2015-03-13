@@ -55,7 +55,6 @@ setup(
     author_email='stephane.martin_github@vesperal.eu',
     url='https://github.com/stephane-martin/pyloggr',
     packages=find_packages(exclude=['tests']),
-    # todo: are you sure about setup_requires ?
     setup_requires=[
         'setuptools_git', 'setuptools', 'twine', 'wheel', 'Mock'
     ],

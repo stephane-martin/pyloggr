@@ -84,7 +84,7 @@ pygments_style = 'sphinx'
 # A list of ignored prefixes for module index sorting.
 #modindex_common_prefix = []
 keep_warnings = False
-# If true, `todo` and `todoList` produce output, else they produce nothing.
+# If true, todos and todoList produce output, else they produce nothing.
 todo_include_todos = False
 
 # -- Options for HTML output ----------------------------------------------

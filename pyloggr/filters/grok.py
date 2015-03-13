@@ -21,6 +21,7 @@ Depends:    {0.depends_as_str}
 
 logger = logging.getLogger(__name__)
 
+
 @python_2_unicode_compatible
 class PatternNode(object):
     def __init__(self, label, pattern, depends=None):
@@ -143,6 +144,7 @@ class GrokEngine(object):
         return None, None
 
     def apply(self, ev, patterns):
+        # search should be thread safe, but are we sure ?
         (pattern_name, new_fields) = self.search(ev.message, patterns)
         if new_fields:
             ev.update(new_fields)
