@@ -1,11 +1,13 @@
 # encoding: utf-8
-__author__ = 'stef'
-
 """
 Small hack to be able to import configuration from an environment variable.
 
 PYLOGGR_CONFIG_DIR envvar must be defined to some directory that actually contains 'pyloggr_config.py'.
 """
+
+__author__ = 'stef'
+
+
 
 import os
 import sys

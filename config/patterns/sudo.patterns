@@ -1,0 +1,12 @@
+SUDO_OPEN       \(sudo:session\): session opened for user %{USERNAME:account} by %{USERNAME:username}(\(uid=%{INT:uid}\))?
+SUDO_CLOSE      \(sudo:session\): session closed for user %{USERNAME:account}
+SUDO_COMMAND    %{USERNAME:username}\s*:\s*TTY=\S+\s*;\s*PWD=%{PATH:workdir}\s*;\s*USER=%{USERNAME:target}\s*;\s*COMMAND=%{GREEDYDATA:command}
+SUDO_CONTINUE   %{USERNAME:username}\s*:\s*\(command continued\)\s*%{GREEDYDATA:command}
+SUDO_INCORRECT  %{USERNAME:username}\s*:\s*%{INT:tries} incorrect password attempts\s*;\s*TTY=\S+\s*;\s*PWD=%{PATH:workdir}\s*;\s*USER=%{USERNAME:target}\s*;\s*COMMAND=%{GREEDYDATA:command}
+SUDO_FAIL_AUTH  \(sudo:auth\): authentication failure; logname=%{USERNAME:logname} uid=%{INT:uid} euid=%{INT:euid} tty=\S+ ruser=%{USERNAME:ruser} rhost=(?:%{IPORHOST:rhost})?\s*user=%{USERNAME:username}
+SUDO_FAIL_AUTH2 \(sudo:auth\): auth could not identify password for \[USERNAME:logname\]
+SUDO_FAIL_AUTH3 \(sudo:auth\): conversation failed
+
+SUDO_SECURITY   (%{SUDO_INCORRECT}|%{SUDO_FAIL_AUTH}|%{SUDO_FAIL_AUTH2}|%{SUDO_FAIL_AUTH3})
+SUDO_NORMAL     (%{SUDO_OPEN}|%{SUDO_CLOSE}|%{SUDO_COMMAND}|%{SUDO_CONTINUE})
+

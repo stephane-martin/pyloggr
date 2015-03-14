@@ -1,0 +1,7 @@
+IMAPKILLED          master: Warning: Killed with signal %{INT:signal} \(by pid=%{INT:ppid} uid=%{INT:uid} code=%{DATA:code}\)
+IMAPLOGIN           imap-login: Login: user=<%{DATA:user}>, method=%{WORD:method}, rip=%{IP:remoteip}, lip=%{IP:localip}, mpid=%{POSINT}
+IMAPMAXCONNECT      imap-login: Maximum number of connections from user\+IP exceeded \(mail_max_userip_connections=%{POSINT:max}\): user=<%{DATA:user}>, method=%{WORD:method}, rip=%{IP:remoteip}, lip=%{IP:localip}
+IMAPDISCONNECT      imap-login: Disconnected \(no auth attempts in %{INT:seconds} secs\): user=<(%{USERNAME:user})?>, rip=%{IP:remoteip}, lip=%{IP:localip}
+
+DOVECOT_SECURITY    %{IMAPDISCONNECT}|%{IMAPMAXCONNECT}
+DOVECOT             %{IMAPLOGIN}|%{IMAPKILLED}

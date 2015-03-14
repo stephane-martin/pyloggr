@@ -1,0 +1,5 @@
+SPAMD %{SPAMPROCESS}|%{SPAMCLEAN}|%{SPAMSPAM}
+
+SPAMPROCESS spamd: processing message <%{DATA:messageid}> for %{USERNAME:username}:%{INT:uid}
+SPAMCLEAN spamd: clean message \(%{NUMBER:score}\/%{NUMBER:limit}\) for %{USERNAME:username}:%{INT:uid} in %{NUMBER:seconds} seconds, %{INT:bytes} bytes
+SPAMSPAM spamd: identified spam \(%{NUMBER:score}\/%{NUMBER:limit}\) for %{USERNAME:username}:%{INT:uid} in %{NUMBER:seconds} seconds, %{INT:bytes} bytes

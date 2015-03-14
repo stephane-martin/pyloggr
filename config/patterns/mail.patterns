@@ -1,0 +1,39 @@
+# Milter
+
+MILTER_UNKNOWN              %{PF_QUEUE_ID:qid}: milter-reject: UNKNOWN from %{PF_RELAY:relay}: %{DATA:milter_reason}; proto=%{WORD:proto}
+
+# Postfix stuff
+PF_QUEUE_ID                 [A-F0-9]+|NOQUEUE
+PF_EMAIL_ADDRESS_PART       [a-zA-Z0-9_.+-=:]+
+PF_EMAIL_ADDRESS            %{PF_EMAIL_ADDRESS_PART}(@%{PF_EMAIL_ADDRESS_PART})?
+PF_STATUS                   sent|deferred|bounced|expired
+PF_PERM_ERROR               5[0-9]{2}
+PF_MESSAGE_LEVEL            reject|warning|error|fatal|panic
+PF_ACTION                   discard|dunno|filter|hold|ignore|info|prepend|redirect|replace|reject|warn
+PF_RELAY                    \S+
+
+
+PF_ANONYMOUS_CONNECT        Anonymous TLS connection established from %{HOSTNAME:source_host}(\[%{IP:source_ip}\])?
+PF_SMTP5XX                  %{PF_QUEUE_ID:qid}: to=<%{PF_EMAIL_ADDRESS:to_email}>,(\sorig_to=<%{PF_EMAIL_ADDRESS:orig_to_email}>,)? relay=%{PF_RELAY:relay},%{DATA}, status=%{DATA:status} \(host %{HOSTNAME:source_host}(\[%{IP:source_ip}\])? said: %{PF_PERM_ERROR:response_code}
+
+PF_REFUSAL                  %{PF_QUEUE_ID:qid}: host %{PF_RELAY:relay} refused to talk
+PF_LOST_CONNECTION          %{PF_QUEUE_ID:qid}: lost connection with %{PF_RELAY:relay}
+PF_SMTP_TIMEOUT             %{PF_QUEUE_ID:qid}: conversation with %{PF_RELAY:relay} timed out
+PF_GREYLIST                 %{PF_QUEUE_ID:qid}: host %{HOSTNAME:source_host}(\[%{IP:source_ip}\])? said: %{DATA} Greylisting
+
+PF_SMTPD_ACTIONS            %{PF_QUEUE_ID:qid}: %{PF_ACTION:postfix_action}: %{DATA:command} from %{PF_RELAY:relay}: %{PF_PERM_ERROR:responsecode} %{DATA}; from=<%{PF_EMAIL_ADDRESS:from_email}> to=<%{PF_EMAIL_ADDRESS:to_email}>
+PF_SMTPD_LOGIN              %{PF_QUEUE_ID:qid}: client=%{DATA:client}, sasl_method=%{DATA:saslmethod}, sasl_username=%{USERNAME:saslusername}
+PF_SMTPD_NOQUEUE            NOQUEUE:\s+%{PF_ACTION:postfix_action}: %{DATA:command} from %{PF_RELAY:relay}:
+PF_SMTPD_WARNING            warning:\s+(%{IP:source_ip})?
+PF_SSL_ERROR                SSL_accept error from %{PF_RELAY:RELAY}:
+PF_PIPELINE_ERROR           improper command pipelining after %{DATA} from %{USERNAME:remote_user}(\[%{IP:source_ip}\])?: %{DATA} <%{PF_EMAIL_ADDRESS:email}>
+
+# postfix/bounce
+PF_BOUNCE                   %{PF_QUEUE_ID:qid}: sender non-delivery notification: %{PF_QUEUE_ID:bounce_qid}
+
+POSTFIX_ERRORS              %{MILTER_UNKNOWN}|%{PF_PIPELINE_ERROR}|%{PF_SSL_ERROR}|%{PF_SMTPD_WARNING}|%{PF_SMTP_TIMEOUT}|%{PF_LOST_CONNECTION}|%{PF_REFUSAL}|%{PF_SMTP5XX}|%{PF_BOUNCE}
+POSTFIX                     %{PF_ANONYMOUS_CONNECT}|%{PF_GREYLIST}|%{PF_SMTPD_ACTIONS}|%{PF_SMTPD_LOGIN}|%{PF_SMTPD_NOQUEUE}
+
+
+
+

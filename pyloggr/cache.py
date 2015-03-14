@@ -191,13 +191,11 @@ class Cache(object):
 
     @classmethod
     def shutdown(cls):
-        if cls.redis_conn is None:
-            return
-        cls.redis_conn = None
         if cls.redis_child is None:
             return
         cls.redis_child.terminate()
         cls.redis_child = None
+        cls.redis_conn = None
 
     @property
     def syslog(self):

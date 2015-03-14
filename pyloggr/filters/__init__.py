@@ -12,7 +12,7 @@ __author__ = 'stef'
 from os.path import join
 from threading import Lock
 
-from .filters_config import ConfigParser
+from .build_config import ConfigParser
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
 from .addtag import AddTagEngine
@@ -51,7 +51,6 @@ class Filters(object):
         :type ev: Event
         """
         for statement in self.conf:
-            print '*', statement.condition
             if statement.condition.apply(ev):
                 for action in statement.actions:
                     arguments = [arg.apply(ev) for arg in action.arguments]

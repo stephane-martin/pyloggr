@@ -10,6 +10,7 @@ pyloggr package
 
    pyloggr.event
    pyloggr.cache
+   pyloggr.config
 
 
 

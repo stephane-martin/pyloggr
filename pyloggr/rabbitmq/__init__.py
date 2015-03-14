@@ -10,7 +10,6 @@ The RabbitMQ packages provides classes for publishing and consuming to/from Rabb
 __author__ = 'stef'
 
 
-
 class RabbitMQConnectionError(Exception):
     """
     Exception triggered when connection to RabbitMQ fails

@@ -60,9 +60,11 @@ class GrokEngine(object):
         self._compile()
 
     def _read_pattern_files(self):
-        patterns_files = [join(self._patterns_dir, fname)
-                          for fname in os.listdir(self._patterns_dir)
-                          if fname.endswith('.patterns')]
+        patterns_files = [
+            join(self._patterns_dir, fname)
+            for fname in os.listdir(self._patterns_dir)
+            if fname.endswith('.patterns')
+        ]
         self._raw_patterns = dict()
 
         # read the patterns files and store them in raw_patterns
@@ -79,7 +81,11 @@ class GrokEngine(object):
         self._pattern_nodes = dict()
 
         for (label, pattern) in self._raw_patterns.items():
-            self._pattern_nodes[label] = PatternNode(label, pattern, [])
+            if label not in self._pattern_nodes:
+                self._pattern_nodes[label] = PatternNode(label, pattern, [])
+            else:
+                logger.warning("Grok patterns: ignoring duplicate '{}'".format(label))
+
 
         for node in self._pattern_nodes.values():
             patterns_depends = [pattern_depend for (pattern_depend, variable) in re.findall(r'%{(\w+):(\w+)}', node.pattern)]
@@ -119,7 +125,10 @@ class GrokEngine(object):
 
     def _compile(self):
         for node in self._pattern_nodes.values():
-            node.compiled_pattern = regex.compile(node.pattern)
+            try:
+                node.compiled_pattern = regex.compile(node.pattern)
+            except regex.error:
+                logger.exception("Dropping bad pattern '{}'".format(node.label))
 
     def __getitem__(self, item):
         return self._pattern_nodes[item].compiled_pattern
@@ -148,6 +157,7 @@ class GrokEngine(object):
     def apply(self, ev, patterns):
         (pattern_name, new_fields) = self.search(ev.message, patterns)
         if new_fields:
+            new_fields = {label: field for label, field in new_fields.items() if field is not None}
             ev.update(new_fields)
             ev['grok_pattern'] = pattern_name
             return True

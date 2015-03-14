@@ -10,6 +10,7 @@ pyloggr.main package
 .. toctree::
 
    pyloggr.main.syslog_server
-
+   pyloggr.main.event_parser
+   pyloggr.main.shipper2pgsql
 
 

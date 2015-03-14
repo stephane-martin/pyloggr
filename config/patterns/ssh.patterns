@@ -1,0 +1,26 @@
+SSH_KEY (?:[A-Fa-f0-9]{2}:)+[A-Fa-f0-9]{2}
+
+SSHD_BAD_BACKET_LENGTH          Bad packet length %{INT:length}
+SSHD_CLOSED_PREAUTH             Connection closed by %{IPORHOST:remoteip}
+SSHD_INVALID_USER_PREAUTH       input\_userauth\_request: invalid user %{USER:user}
+SSHD_INVALID_USER               Invalid user %{USER:user} from %{IPORHOST:remoteip}
+SSHD_USER_NOT_IN_ALLOWGROUPS    User %{USER:user} from %{IPORHOST:remoteip} not allowed because %{GREEDYDATA:reason}
+SSHD_DISCONNECT                 Received disconnect from %{IPORHOST:remoteip}: %{INT}: %{GREEDYDATA:reason}
+SSHD_DISCONNECTING              Disconnecting: %{GREEDYDATA:reason}
+SSHD_PUBLIC_KEY                 Accepted publickey for %{USER:user} from %{IPORHOST:remoteip} port %{INT:port} ssh2: %{WORD:keytype} %{SSH_KEY:key}
+SSHD_NO_ID                      Did not receive identification string from %{IPORHOST:remoteip}
+SSHD_NO_MAC_MATCH               fatal: no matching mac found: client %{GREEDYDATA:listofmacs} server %{DATA:servermac}
+SSHD_NO_CIPHER_MATCH            fatal: no matching cipher found: %{GREEDYDATA:listofciphers} server %{DATA:servercipher}
+SSHD_REVERSE_MAPPING            reverse mapping checking getaddrinfo for %{HOSTNAME:hostname} \[%{IP:remoteip}\] failed
+SSHD_BAD_PROTOCOL               Bad protocol version identification \'%{DATA:protocol}\' from %{IPORHOST} port %{POSINT:port}
+SSHD_PAM_OPEN                   \(sshd:session\): session opened for user %{USER:user} by \(uid=%{INT:uid}\)
+SSHD_PAM_CLOSE                  \(sshd:session\): session closed for user %{USER:user}
+SSHD_PAM_LDAP_FAILED_PASSWORD   failed to get password: %{GREEDYDATA:reason}
+SSHD_PAM_UNIX_FAILED_PASSWORD   auth could not identify password for \[%{USER:user}\]
+SSHD_BREAKIN                    Address %{IP:remoteip} maps to %{IPORHOST:hostname}
+SSHD_INVALID_DH                 invalid public DH value: %{GREEDYDATA:reason}
+SSHD_BAD_EXCHANGE               fatal: Unable to negotiate a key exchange method
+SSHD_SOCKET_FAIL                fatal: Read from socket failed: Connection reset by peer
+
+SSHD_SECURITY    (%{SSHD_BAD_BACKET_LENGTH}|%{SSHD_CLOSED_PREAUTH}|%{SSHD_INVALID_USER_PREAUTH}|%{SSHD_INVALID_USER}|%{SSHD_USER_NOT_IN_ALLOWGROUPS}|%{SSHD_NO_ID}|%{SSHD_NO_MAC_MATCH}|%{SSHD_NO_CIPHER_MATCH}|%{SSHD_REVERSE_MAPPING}|%{SSHD_BAD_PROTOCOL}|%{SSHD_PAM_LDAP_FAILED_PASSWORD}|%{SSHD_PAM_UNIX_FAILED_PASSWORD}|%{SSHD_BREAKIN}|%{SSHD_INVALID_DH}|%{SSHD_BAD_EXCHANGE}|%{SSHD_SOCKET_FAIL})
+SSHD_NORMAL      (%{SSHD_DISCONNECT}|%{SSHD_DISCONNECTING}|%{SSHD_PUBLIC_KEY}|%{SSHD_PAM_OPEN}|%{SSHD_PAM_CLOSE})
