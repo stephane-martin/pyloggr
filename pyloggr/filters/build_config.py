@@ -1,9 +1,14 @@
 # encoding: utf-8
+
+"""
+Pyparsing stuff to parse `filters.conf`
+"""
+
 __author__ = 'stef'
 
 import re
 
-from pyparsing import Word, Keyword, Literal, Suppress, quotedString, pythonStyleComment, alphas, alphanums
+from pyparsing import Word, Keyword, Literal, Suppress, quotedString, pythonStyleComment, alphas, alphanums, Forward
 from pyparsing import Optional, Group, OneOrMore, delimitedList, ParseException, operatorPrecedence, opAssoc
 from ast import literal_eval
 
@@ -255,20 +260,7 @@ class Notin(Predicate):
             raise ValueError
 
 
-class Filter(object):
-    def __init__(self, name, arguments=None):
-        self.name = name.strip('" ')
-        self.arguments = arguments
 
-    def __str__(self):
-        return "Filter {} ({})".format(self.name, ','.join([str(arg) for arg in self.arguments]))
-
-    def __repr__(self):
-        return self.__str__()
-
-    @classmethod
-    def from_tokens(cls, toks):
-        return Filter(toks[0], toks[1:])
 
 
 def make_condition(toks):
@@ -281,7 +273,7 @@ def make_condition(toks):
 
 # noinspection PyUnusedLocal
 def make_filter(s, loc, toks):
-    return Filter.from_tokens(toks)
+    return FilterBlock.from_tokens(toks)
 
 
 # noinspection PyUnusedLocal
@@ -323,7 +315,9 @@ class ConfigParser(object):
         regexp_i_op     = Literal('~*')
 
         open_par        = Suppress(Literal('('))
+        open_acc        = Suppress(Literal('{'))
         close_par       = Suppress(Literal(')'))
+        close_acc       = Suppress(Literal('}'))
 
         my_qs = quotedString.setParseAction(quoted_string_to_constant)
         label = Word(initChars=alphas, bodyChars=alphanums + "_")
@@ -395,10 +389,16 @@ class ConfigParser(object):
         filter_argument = my_qs | plain_field | extended_field
         filter_arguments = Optional(delimitedList(filter_argument)).setResultsName('arguments')
         filter_statement = (filter_name + Optional(open_par + filter_arguments + close_par)).setParseAction(make_filter)
-        filters = Group(OneOrMore(filter_statement)).setResultsName('actions')
 
-        block = (Group(if_cond + condition + Suppress(Literal('{')) + filters + Suppress(Literal('}')))) | Suppress(comment_line)
-        self._parser = OneOrMore(block)
+        if_filter_block = Forward()
+        if_block = Forward()
+        general_block = Suppress(comment_line) | filter_statement | if_block |if_filter_block
+        if_block << Group(if_cond + condition + open_acc + Group(OneOrMore(general_block)) + close_acc)
+        if_filter_block << Group(if_cond + filter_statement + open_acc + Group(OneOrMore(general_block)) + close_acc)
+        if_block.setParseAction(make_if_block)
+        if_filter_block.setParseAction(make_if_filter_block)
+
+        self._parser = OneOrMore(general_block)
 
     def parse_string(self, s):
         try:
@@ -412,3 +412,67 @@ class ConfigParser(object):
         s = to_unicode(s)
         res = self.parse_string(s)
         return res
+
+
+def make_if_block(toks):
+    return IfBlock.from_tokens(toks[0])
+
+def make_if_filter_block(toks):
+    return IfFilterBlock.from_tokens(toks[0])
+
+
+class IfBlock(object):
+    def __init__(self, condition, statements):
+        self.condition = condition
+        self.statements = statements
+        self.typ = "If block"
+
+    def __str__(self):
+        return "IfBlock {} ({})".format(self.condition, ','.join([statement.typ for statement in self.statements]))
+
+    def __repr__(self):
+        return self.__str__()
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return IfBlock(toks[0], toks[1])
+
+
+class IfFilterBlock(object):
+    def __init__(self, filtr, statements):
+        self.filter = filtr
+        self.statements = statements
+        self.typ = "IfFilter block"
+
+    def __str__(self):
+        return "IfFilter {} ({}) ({})".format(
+            self.filter.filter_name,
+            ','.join([str(arg) for arg in self.filter.filter_arguments]),
+            ','.join([statement.typ for statement in self.statements]))
+
+    def __repr__(self):
+        return self.__str__()
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return IfFilterBlock(
+            statements=toks[1],
+            filtr=toks[0]
+        )
+
+
+class FilterBlock(object):
+    def __init__(self, filter_name, filter_arguments=None):
+        self.filter_name = filter_name.strip('" ')
+        self.filter_arguments = filter_arguments
+        self.typ = "Filter"
+
+    def __str__(self):
+        return "Filter {} ({})".format(self.filter_name, ','.join([str(arg) for arg in self.filter_arguments]))
+
+    def __repr__(self):
+        return self.__str__()
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return FilterBlock(toks[0], toks[1:])

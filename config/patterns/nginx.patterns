@@ -1,4 +1,4 @@
-NGINX_NOT_FOUND %{DATA} \"%{DATA:resource}\" is not found \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
-NGINX_OPEN_FAILED %{DATA} %{WORD}\(\) \"%{DATA:resource}\" failed \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
+NGINX_NOT_FOUND %{DATA} \"%{DATA:resource}\" is not found \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client_ip}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
+NGINX_OPEN_FAILED %{DATA} %{WORD}\(\) \"%{DATA:resource}\" failed \(%{INT:errcode}: %{DATA:reason}\), client: %{IPORHOST:client_ip}, server: %{IPORHOST:server}, request: \"%{DATA:request}\", host: \"%{IPORHOST:httphost}\"
 NGINX_ACCESS_LOG remote_addr="%{IPORHOST:client_ip}" remote_usr="%{DATA:ruser}" req_dtime="%{TIMESTAMP_ISO8601:req_dtime}" req_len="%{NONNEGINT:req_len}" httphost="%{IPORHOST:httphost}" req="%{DATA:req}" uri="%{DATA:uri}" status="%{NONNEGINT:status}" bytes_sent="%{NONNEGINT:bytes_sent}" referer="%{DATA:referer}" agent="%{DATA:agent}" duration="%{BASE10NUM:duration}" up_duration="%{BASE10NUM:up_duration}" method="%{WORD:method}" scheme="%{WORD:scheme}" server="%{IPORHOST:server_name}"
 

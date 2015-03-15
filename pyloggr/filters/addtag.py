@@ -3,8 +3,10 @@ __author__ = 'stef'
 
 from ..event import Event
 
+
 class AddTagEngine(object):
     thread_safe = True
+
     def __init__(self, directory):
         pass
 
@@ -18,5 +20,6 @@ class AddTagEngine(object):
         """
         :type ev: Event
         """
-        ev.add_tags(arguments)
+        if arguments:
+            ev.add_tags(arguments)
         return True

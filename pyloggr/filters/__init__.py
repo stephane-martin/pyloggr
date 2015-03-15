@@ -12,14 +12,13 @@ __author__ = 'stef'
 from os.path import join
 from threading import Lock
 
-from .build_config import ConfigParser
+from .build_config import ConfigParser, FilterBlock, IfBlock, IfFilterBlock
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
 from .addtag import AddTagEngine
 from .removetag import RemoveTagEngine
 from .drop import DropException, DropEngine
 from .useragent import UserAgentEngine
-from ..event import Event
 
 
 class Filters(object):
@@ -50,19 +49,33 @@ class Filters(object):
 
     def apply(self, ev):
         """
-        :type ev: Event
+        Apply the configured filters to the given event
+
+        :param ev: event
+        :type ev: pyloggr.event.Event
         """
-        for statement in self.conf:
-            if statement.condition.apply(ev):
-                for action in statement.actions:
-                    arguments = [arg.apply(ev) for arg in action.arguments]
-                    if self._filters[action.name].thread_safe:
-                        return_value = self._filters[action.name].apply(ev, arguments)
-                    else:
-                        with self.filters_locks[action.name]:
-                            return_value = self._filters[action.name].apply(ev, arguments)
-                    if not return_value:
-                        break
 
+        def apply_one_statement(statement):
+            if isinstance(statement, FilterBlock):
+                calculated_arguments = map(lambda argument: argument.apply(ev), statement.filter_arguments)
+                if self._filters[statement.filter_name].thread_safe:
+                    return_value = self._filters[statement.filter_name].apply(ev, calculated_arguments)
+                else:
+                    with self.filters_locks[statement.filter_name]:
+                        return_value = self._filters[statement.filter_name].apply(ev, calculated_arguments)
+                return return_value
 
+            elif isinstance(statement, IfBlock):
+                if statement.condition.apply(ev):
+                    map(apply_one_statement, statement.statements)
+
+            elif isinstance(statement, IfFilterBlock):
+                return_value = apply_one_statement(statement.filter)
+                if return_value:
+                    map(apply_one_statement, statement.statements)
+
+            else:
+                raise RuntimeError("Unknown statement type")
+
+        map(apply_one_statement, self.conf)
 

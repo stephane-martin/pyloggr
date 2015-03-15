@@ -146,7 +146,9 @@ class GrokEngine(object):
         if not isinstance(patterns, list):
             patterns = [patterns]
         for pattern in patterns:
-            if pattern in self:
+            if not pattern:
+                logger.warning("Grok: invalid pattern")
+            elif pattern in self:
                 m = self[pattern].search(s)
                 if m:
                     return pattern, m.groupdict()
@@ -154,8 +156,13 @@ class GrokEngine(object):
                 logger.warning("Grok: Unknown pattern: {}".format(pattern))
         return None, None
 
-    def apply(self, ev, patterns):
-        (pattern_name, new_fields) = self.search(ev.message, patterns)
+    def apply(self, ev, arguments):
+        if not arguments:
+            return
+
+
+
+        (pattern_name, new_fields) = self.search(ev.message, arguments)
         if new_fields:
             new_fields = {label: field for label, field in new_fields.items() if field is not None}
             ev.update(new_fields)

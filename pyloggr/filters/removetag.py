@@ -14,5 +14,6 @@ class RemoveTagEngine(object):
         pass
 
     def apply(self, ev, arguments):
-        ev.remove_tags(arguments)
+        if arguments:
+            ev.remove_tags(arguments)
         return True
