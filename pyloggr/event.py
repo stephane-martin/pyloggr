@@ -34,7 +34,7 @@ from .config import HMAC_KEY
 
 
 logger = logging.getLogger(__name__)
-
+hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
 
 class ParsingError(ValueError):
     """
@@ -537,6 +537,8 @@ class Event(object):
             event_dict['syslogtag'] = event_dict['app_name']
 
         ev = cls._load_dictionnary(event_dict)
+
+
         if flds['STRUCTUREDDATA'] != '-':
             ev.add_tags('rfc5424 structured data')
             logger.debug(flds['STRUCTUREDDATA'])
