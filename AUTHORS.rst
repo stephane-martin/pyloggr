@@ -5,7 +5,7 @@ Credits
 Main author
 -----------
 
-* Stephane Martin <stephane.martin@vesperal.eu>
+* Stephane Martin <stephane.martin_github@vesperal.eu>
 
 Contributors
 ------------

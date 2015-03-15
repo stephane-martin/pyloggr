@@ -1,1 +1,16 @@
 GPLv3+
+
+
+
+req="/nuxeo/nxpath/default/Culture%20G/workspaces/S%C3%A9curit%C3%A9%20publique/WikiLeaks_Secret_CIA_rev@view_documents?tabIds=%3A&conversationId=0NXMAIN1"
+uri="/nuxeo/nxpath/default/Culture G/workspaces/S\xC3\xA9curit\xC3\xA9 publique/WikiLeaks_Secret_CIA_rev@view_documents"
+
+"message":"
+
+req=\"\/nuxeo\/nxpath\/default\/Culture%20G\/workspaces\/S%C3%A9curit%C3%A9%20publique\/WikiLeaks_Secret_CIA_rev@view_documents?tabIds=%3A&conversationId=0NXMAIN1\"
+uri=\"\/nuxeo\/nxpath\/default\/Culture G\/workspaces\/S\\xC3\\xA9curit\\xC3\\xA9 publique\/WikiLeaks_Secret_CIA_rev@view_documents\"
+
+req=\"\/nuxeo\/nxpath\/default\/Culture%20G\/workspaces\/S%C3%A9curit%C3%A9%20publique\/WikiLeaks_Secret_CIA_rev@view_documents?tabIds=%3A&conversationId=0NXMAIN1\"
+uri=\"\/nuxeo\/nxpath\/default\/Culture G\/workspaces\/S\\xC3\\xA9curit\\xC3\\xA9 publique\/WikiLeaks_Secret_CIA_rev@view_documents\"
+
+status=\"200\" bytes_sent=\"18066\" referer=\"-\" agent=\"Mozilla\/5.0 (Macintosh; Intel Mac OS X 10.10; rv:36.0) Gecko\/20100101 Firefox\/36.0\" duration=\"1.094\" up_duration=\"1.094\" method=\"GET\" scheme=\"https\" server=\"www.vesperal.org\" @[_PID=21311 _UID=33 _GID=33 _COMM=nginx _EXE=\/opt\/nginx\/sbin\/nginx _CMDLINE=\"nginx: worker process                          \"]","msg":" remote_addr=\"81.56.64.128\" remote_usr=\"-\" req_dtime=\"2015-03-14T22:53:03+01:00\" req_len=\"864\" httphost=\"www.vesperal.org\" req=\"\/nuxeo\/nxpath\/default\/Culture%20G\/workspaces\/S%C3%A9curit%C3%A9%20publique\/WikiLeaks_Secret_CIA_rev@view_documents?tabIds=%3A&conversationId=0NXMAIN1\" uri=\"\/nuxeo\/nxpath\/default\/Culture G\/workspaces\/S\\xC3\\xA9curit\\xC3\\xA9 publique\/WikiLeaks_Secret_CIA_rev@view_documents\" status=\"200\" bytes_sent=\"18066\" referer=\"-\" agent=\"Mozilla\/5.0 (Macintosh; Intel Mac OS X 10.10; rv:36.0) Gecko\/20100101 Firefox\/36.0\" duration=\"1.094\" up_duration=\"1.094\" method=\"GET\" scheme=\"https\" server=\"www.vesperal.org\" @[_PID=21311 _UID=33 _GID=33 _COMM=nginx _EXE=\/opt\/nginx\/sbin\/nginx _CMDLINE=\"nginx: worker process                          \"]""}

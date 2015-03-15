@@ -307,6 +307,7 @@ class SyslogClientConnection(object):
                 try:
                     yield self._process_tcp_event(syslog_msg)
                 except ParsingError:
+                    # todo: react less violently: log message, continue processing
                     logger.warning(u"TCP client sent a malformed event. We disconnect it.")
                     self.disconnect()
                     break
