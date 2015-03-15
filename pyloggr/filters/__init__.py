@@ -18,6 +18,7 @@ from .geoip import GeoIPEngine
 from .addtag import AddTagEngine
 from .removetag import RemoveTagEngine
 from .drop import DropException, DropEngine
+from .useragent import UserAgentEngine
 from ..event import Event
 
 
@@ -27,7 +28,8 @@ class Filters(object):
         'geoip': GeoIPEngine,
         'addtag': AddTagEngine,
         'removetag': RemoveTagEngine,
-        'drop': DropEngine
+        'drop': DropEngine,
+        'useragent': UserAgentEngine
     }
 
     filters_locks = dict([(name, Lock()) for name in filters_modules])

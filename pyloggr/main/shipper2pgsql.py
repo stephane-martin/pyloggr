@@ -158,7 +158,7 @@ class PgsqlShipper(object):
                     # sort the events by their timestamp
                     events = SortedSet(events)
                     # build the SQL insert query
-                    values = ','.join([ev.dump_sql(cur) for ev in events])
+                    values = ','.join([evt.dump_sql(cur) for evt in events])
                     # query = "INSERT INTO {} {} VALUES ".format(tablename, SQL_COLUMNS) + values
                     query = SQL_INSERT_QUERY.format(
                         SQL_COLUMNS_STR, values, tablename, SQL_COLUMNS_STR, D_COLUMNS, tablename
@@ -174,7 +174,7 @@ class PgsqlShipper(object):
 
         logger.info("{} events to forward to PGSQL".format(size))
         msgs = list()
-        # todo: write less ugly code
+        # todo: write less redundant code
         for _ in range(size):
             msgs.append(self.syslog_ev_queue.get_nowait())
 

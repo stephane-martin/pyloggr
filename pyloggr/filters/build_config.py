@@ -309,6 +309,7 @@ class ConfigParser(object):
         addtag          = Keyword("addtag")
         removetag       = Keyword("removetag")
         drop            = Keyword("drop")
+        useragent       = Keyword("useragent")
 
         and_operand     = Keyword('and')
         or_operand      = Keyword('or')
@@ -337,7 +338,7 @@ class ConfigParser(object):
             lambda s, loc, toks: ExtendedField(toks[1])
         )
 
-        filter_name = (geoip | grok | addtag | removetag | drop)
+        filter_name = (geoip | grok | addtag | removetag | drop | useragent)
 
         comment_line = pythonStyleComment
 

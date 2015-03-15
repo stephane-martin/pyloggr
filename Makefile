@@ -35,7 +35,7 @@ clean-test:
 	rm -fr htmlcov/
 
 lint:
-	flake8 zerepo tests
+	flake8 pyloggr tests
 
 test:
 	python setup.py test
@@ -44,16 +44,14 @@ test-all:
 	tox
 
 coverage:
-	coverage run --source zerepo setup.py test
+	coverage run --source pyloggr setup.py test
 	coverage report -m
 	coverage html
 	open htmlcov/index.html
 
 docs:
-	sphinx-apidoc -f -o docs/ pyloggr
 	$(MAKE) -C docs clean
 	$(MAKE) -C docs html
-	open docs/_build/html/index.html
 
 release: clean
 	python setup.py sdist upload
