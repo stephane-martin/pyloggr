@@ -6,4 +6,4 @@ API Documentation
 
    pyloggr
    pyloggr.main
-
+   pyloggr.rabbitmq

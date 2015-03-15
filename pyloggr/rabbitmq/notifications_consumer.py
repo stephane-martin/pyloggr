@@ -22,6 +22,9 @@ class NotificationsConsumer(Consumer, Observable):
 
     @coroutine
     def start_consuming(self):
+        """
+        Start consuming notifications from RabbitMQ and notify observers.
+        """
         message_queue = super(NotificationsConsumer, self).start_consuming()
         while True:
             message = yield message_queue.get()

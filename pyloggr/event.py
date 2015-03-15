@@ -40,7 +40,8 @@ class ParsingError(ValueError):
     """
     Triggered when a string can't be parsed into an `Event`
     """
-    pass
+    def __init__(self, *args, **kwargs):
+        self.json = kwargs['json'] if 'json' in kwargs else False
 
 
 class CFieldSchema(Schema):
@@ -629,7 +630,7 @@ class Event(object):
         try:
             d = ujson.loads(json_encoded)
         except ValueError as ex:
-            raise_from(ParsingError(u"Provided string was not JSON parsable"), ex)
+            raise_from(ParsingError(u"Provided string was not JSON parsable", json=True), ex)
         else:
             return cls._load_dictionnary(d)
 

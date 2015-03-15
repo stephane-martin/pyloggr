@@ -173,7 +173,16 @@ class SyslogClientConnection(object):
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from TCP client {}:{}".format(self.client_host, self.client_port))
-            event = Event.parse_bytes_to_event(bytes_event)
+            try:
+                event = Event.parse_bytes_to_event(bytes_event)
+            except ParsingError as ex:
+                if ex.json:
+                    logger.warning("JSON decoding failed. We log the event, drop it and continue")
+                    logger.warning(bytes_event)
+                    return
+                else:
+                    raise
+
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
             self.nb_messages_received += 1
@@ -209,7 +218,17 @@ class SyslogClientConnection(object):
         """
         if len(bytes_event) > 0:
             logger.info("Got an event from RELP client {}:{}".format(self.client_host, self.client_port))
-            event = Event.parse_bytes_to_event(bytes_event)
+            try:
+                event = Event.parse_bytes_to_event(bytes_event)
+            except ParsingError as ex:
+                if ex.json:
+                    logger.warning("JSON decoding failed. We send 500 to RELP client and continue")
+                    logger.warning(bytes_event)
+                    self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
+                    return
+                else:
+                    raise
+
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
 
@@ -307,7 +326,6 @@ class SyslogClientConnection(object):
                 try:
                     yield self._process_tcp_event(syslog_msg)
                 except ParsingError:
-                    # todo: react less violently: log message, continue processing
                     logger.warning(u"TCP client sent a malformed event. We disconnect it.")
                     self.disconnect()
                     break

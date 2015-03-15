@@ -1,8 +1,8 @@
 # encoding: utf-8
 
 """
-The RabbitMQ packages provides classes for publishing and consuming to/from RabbitMQ.
-
+The pyloggr.rabbitmq subpackage provides classes for publishing and consuming to/from RabbitMQ.
+Pika library is used, but the pika callback style has been workarounded in coroutines.
 
 ------------------------
 """

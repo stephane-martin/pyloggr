@@ -1,4 +1,9 @@
 # encoding: utf-8
+
+"""
+The publisher module provides the `Publisher` class.
+"""
+
 __author__ = 'stef'
 
 import logging
@@ -16,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class Publisher(object):
+    """
+    Publish messages in RabbitMQ
+    """
 
     def __init__(self, rabbitmq_config):
 
