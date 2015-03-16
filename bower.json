@@ -1,0 +1,32 @@
+{
+  "name": "pyloggr_project",
+  "version": "0.1.2",
+  "homepage": "https://github.com/stephane-martin/pyloggr",
+  "authors": [
+    "stephane-martin <stephane.martin_github@vesperal.eu>"
+  ],
+  "description": "Log management with Python and RabbitMQ",
+  "keywords": [
+    "rabbitmq",
+    "python",
+    "logs"
+  ],
+  "license": "GPLv3",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "pyloggr/static/vendor",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "font-awesome": "~4.3.0",
+    "jquery": "~2.1.3",
+    "react": "~0.13.0",
+    "requirejs": "~2.1.16",
+    "bower": "*",
+    "install": "~1.0.4",
+    "kraken": "https://github.com/cferdinandi/kraken.git"
+  }
+}

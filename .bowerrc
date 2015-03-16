@@ -1,0 +1,7 @@
+{
+  "directory": "pyloggr/static/vendor",
+  "cwd": "/Users/stef/Documents/Seafile/dev/pyloggr_project",
+  "analytics": true,
+  "strict-ssl": true,
+  "color": true
+}

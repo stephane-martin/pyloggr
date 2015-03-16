@@ -69,6 +69,12 @@
           </table>
         </div>
       {% endfor %}
+      <h2>RabbitMQ queues</h2>
+      <table id="queues">
+      {% for queue_name, queue in rabbitmq_queues.items() %}
+        <tr id="queue_{{ queue_name }}"><td>{{ queue_name }}</td><td>{{ queue['messages'] }}</td></tr>
+      {% endfor %}
+      </table>
     {% else %}
       <h2>Redis is not available</h2>
     {% endif %}
