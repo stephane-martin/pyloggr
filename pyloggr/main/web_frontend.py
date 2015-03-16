@@ -47,6 +47,7 @@ class SyslogClientsFeed(WebSocketHandler):
     def on_close(self):
         logger.debug("WebSocket closed")
         self.application.consumer.unregister(self)
+        self.application.rabbitmq_stats.unregister(self)
 
     def check_origin(self, origin):
         return True

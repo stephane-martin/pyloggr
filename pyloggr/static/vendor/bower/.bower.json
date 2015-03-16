@@ -9,6 +9,5 @@
   },
   "_source": "git://github.com/theshock/atomjs.git",
   "_target": "*",
-  "_originalSource": "bower",
-  "_direct": true
+  "_originalSource": "bower"
 }

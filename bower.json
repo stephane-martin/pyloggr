@@ -27,6 +27,8 @@
     "requirejs": "~2.1.16",
     "bower": "*",
     "install": "~1.0.4",
-    "kraken": "https://github.com/cferdinandi/kraken.git"
+    "kraken": "https://github.com/cferdinandi/kraken.git",
+    "string-format": "https://github.com/davidchambers/string-format.git#~0.5.0",
+    "tables": "https://github.com/cferdinandi/tables.git"
   }
 }

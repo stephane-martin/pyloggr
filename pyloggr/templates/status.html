@@ -12,21 +12,14 @@
     <!-- Icons: place in the root directory -->
     <!-- https://github.com/audreyr/favicon-cheat-sheet -->
 
-    <!-- feature detection -->
-    <script src="{{ prefix }}/static/js/detects.js"></script>
 
     <!-- stylesheets -->
-    <link rel="stylesheet" href="{{ prefix }}/static/css/main.css">
-    <link rel="stylesheet" href="{{ prefix }}/static/css/tables.css">
+    <link rel="stylesheet" href="{{ prefix }}/static/vendor/kraken/dist/css/main.css">
+    <link rel="stylesheet" href="{{ prefix }}/static/vendor/tables/dist/css/tables.css">
 
-    <script type='application/javascript'>
-        var prefix = '{{ prefix }}';
-    </script>
+    <script data-main="static/main-status" src="static/vendor/requirejs/require.js"></script>
 
 
-    <script type='application/javascript' src="{{ prefix }}/static/jquery.js"></script>
-    <script type='application/javascript' src="{{ prefix }}/static/string-format.js"></script>
-    <script type='application/javascript' src="{{ prefix }}/static/status.js"></script>
 
     <meta charset="UTF-8">
     <title>Syslog status</title>
