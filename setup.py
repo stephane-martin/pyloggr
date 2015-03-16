@@ -87,8 +87,9 @@ if __name__ == "__main__":
                 'pyloggr_web_frontend = pyloggr.scripts.pyloggr_web_frontend:main'
             ]
         },
+
         data_files=[
-            (join('etc/config', root), list_of_files) for root, list_of_files in list_subdir('config')
+            (join('~/.config', root), list_of_files) for root, list_of_files in list_subdir('config')
         ],
 
         test_suite='tests',

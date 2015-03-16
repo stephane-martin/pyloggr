@@ -13,8 +13,6 @@ import os
 import sys
 from os.path import join, dirname
 
-
-
 CONFIG_ENV = os.environ.get('PYLOGGR_CONFIG_DIR')
 
 if CONFIG_ENV:
