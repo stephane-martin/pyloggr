@@ -11,23 +11,38 @@ from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
-from tornado.gen import coroutine
-from tornado.ioloop import PeriodicCallback
+from tornado.gen import coroutine, Task
+from tornado.ioloop import PeriodicCallback, IOLoop
 from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader
-import pyrabbit.api
+import momoko
+import psycopg2
 
+
+from ..rabbitmq import management
 from ..rabbitmq.notifications_consumer import NotificationsConsumer
-from pyloggr.utils.observable import Observable
+from ..rabbitmq import RabbitMQConnectionError
+from ..utils.observable import Observable
 from ..config import RABBITMQ_NOTIFICATIONS_CONFIG, COOKIE_SECRET, RABBITMQ_HTTP, RABBITMQ_PASSWORD, RABBITMQ_USER
 from ..config import RABBITMQ_VHOST, FROM_RABBITMQ_TO_PARSER_CONFIG, FROM_RABBITMQ_TO_PGSQL_CONFIG
+from ..config import PGSQL_CONFIG
 from ..cache import cache
+
+DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
+    PGSQL_CONFIG['dbname'], PGSQL_CONFIG['user'], PGSQL_CONFIG['password'],
+    PGSQL_CONFIG['host'], PGSQL_CONFIG['port'], PGSQL_CONFIG['connect_timeout']
+)
 
 logger = logging.getLogger(__name__)
 PERIODIC_RABBIT_STATUS_TIME = 10 * 1000
 
 
+# noinspection PyAbstractClass
 class SyslogClientsFeed(WebSocketHandler):
+    """
+    a Websocket used to talk with the browser
+    """
+
     def open(self):
         logger.debug("Websocket is opened")
         self.set_nodelay(True)
@@ -35,9 +50,15 @@ class SyslogClientsFeed(WebSocketHandler):
         self.application.consumer.register(self)
         # get notifications from RabbitMQ management API
         self.application.rabbitmq_stats.register(self)
+        self.application.pgsql_stats.register(self)
 
     def notified(self, d):
-        # syslog client was added or removed
+        """
+        `notified` is called by observables, when some event is meant to be communicated to the web frontend
+
+        :param d: the event data to transmit to the web frontend
+        :type d: dict
+        """
         self.write_message(d)
 
     def on_message(self, message):
@@ -48,6 +69,7 @@ class SyslogClientsFeed(WebSocketHandler):
         logger.debug("WebSocket closed")
         self.application.consumer.unregister(self)
         self.application.rabbitmq_stats.unregister(self)
+        self.application.pgsql_stats.unregister(self)
 
     def check_origin(self, origin):
         return True
@@ -120,68 +142,148 @@ class PyloggrApplication(Application):
 
 
 class WebServer(object):
+    """
+    Pyloggr process for the web frontend part
+    """
     def __init__(self):
         self.consumer = NotificationsConsumer(RABBITMQ_NOTIFICATIONS_CONFIG, 'pyloggr.*.*')
         self.app = PyloggrApplication('/syslog', self.consumer)
         self.http_server = HTTPServer(self.app)
         self.sockets = bind_sockets(8888)
-        self._periodic = None
-        self.rabbitmq_stats = None
+        self._periodic_rabbit = None
+        self._periodic_pgsql = None
 
     @coroutine
-    def start(self):
-        yield self.consumer.start()
+    def launch(self):
+        try:
+            lost_rabbit_connection = yield self.consumer.start()
+        except RabbitMQConnectionError:
+            # no rabbitmq connection
+            pass
+        else:
+            IOLoop.instance().add_callback(self.consumer.start_consuming)
         self.http_server.add_sockets(self.sockets)
-        self.consumer.start_consuming()
-        self.start_periodic_rabbitmq_stats()
+        self.start_periodics()
 
     @coroutine
-    def stop(self):
+    def shutdown(self):
         yield self.http_server.close_all_connections()
         self.stop_periodic_rabbitmq_stats()
         self.consumer.stop()
         self.http_server.stop()
 
-    def start_periodic_rabbitmq_stats(self):
+    def start_periodics(self):
         self.app.rabbitmq_stats = RabbitMQStats()
         self.app.rabbitmq_stats.update()
-        if self._periodic is None:
-            self._periodic = PeriodicCallback(self.get_rabbitmq_stats, PERIODIC_RABBIT_STATUS_TIME)
-            self._periodic.start()
-
-    @coroutine
-    def get_rabbitmq_stats(self):
-        yield self.app.rabbitmq_stats.update()
+        self.app.pgsql_stats = PgSQLStats()
+        self.app.pgsql_stats.update()
+        if self._periodic_rabbit is None:
+            self._periodic_rabbit = PeriodicCallback(self.app.rabbitmq_stats.update, PERIODIC_RABBIT_STATUS_TIME)
+            self._periodic_rabbit.start()
+        if self._periodic_pgsql is None:
+            self._periodic_pgsql = PeriodicCallback(self.app.pgsql_stats.update, PERIODIC_RABBIT_STATUS_TIME)
+            self._periodic_pgsql.start()
 
     def stop_periodic_rabbitmq_stats(self):
-        if self._periodic is not None:
-            self._periodic.stop()
+        if self._periodic_rabbit is not None:
+            self._periodic_rabbit.stop()
             self.app.rabbitmq_stats = None
+        if self._periodic_pgsql is not None:
+            self._periodic_pgsql.stop()
+            self.app.pgsql_stats = None
+
+
+class PgSQLStats(Observable):
+    """
+    Gather information from the database
+    """
+    def __init__(self):
+        Observable.__init__(self)
+        self.available = None
+        self._updating = False
+
+    @coroutine
+    def update(self):
+        if self._updating:
+            return
+        self._updating = True
+        db_conn = None
+        stats = None
+        try:
+            db_conn = yield momoko.Op(momoko.Connection().connect, DSN)
+            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(PGSQL_CONFIG['tablename']))
+            stats = cursor.fetchone()[0]
+        except psycopg2.Error:
+            logger.exception("Database seems down")
+            self.available = False
+        else:
+            self.available = True
+        finally:
+            if db_conn is not None:
+                db_conn.close()
+
+        if stats:
+            logger.debug("{} lines in PGSQL".format(stats))
+        # notify the websocket
+        yield self.notify_observers({
+            'action': 'pgsql.stats',
+            'loglines': stats,
+            'available': self.available
+        })
+
+        self._updating = False
 
 
 class RabbitMQStats(Observable):
+    """
+    Gather information from RabbitMQ management API
+    """
     queue_names = [FROM_RABBITMQ_TO_PARSER_CONFIG['queue'], FROM_RABBITMQ_TO_PGSQL_CONFIG['queue']]
 
     def __init__(self):
         self.queues = {name: {} for name in self.queue_names}
-        self.executor = ThreadPoolExecutor(max_workers=len(self.queues)+1)
+        self.available = None
+        self._updating = False
 
-        self._rabbitmq_api_client = pyrabbit.api.Client(
+        self._rabbitmq_api_client = management.Client(
             host=RABBITMQ_HTTP,
             user=RABBITMQ_USER,
             passwd=RABBITMQ_PASSWORD,
-            timeout=30
+            timeout=13
         )
         Observable.__init__(self)
 
     @coroutine
     def update(self):
-        # pyrabbit is not async, so lets use threads
-        results = dict()
-        for name in self.queue_names:
-            # httplib is not thread safe, so lets do the requests in sequence
-            results[name] = yield self.executor.submit(self._rabbitmq_api_client.get_queue, RABBITMQ_VHOST, name)
+        if self._updating:
+            return
 
-        for name in self.queue_names:
-            self.queues[name]['messages'] = results[name]['messages']
-        self.notify_observers({'action': 'queues.stats', 'queues': self.queues})
+        self._updating = True
+        results = dict()
+        try:
+            for name in self.queue_names:
+                results[name] = yield self._rabbitmq_api_client.get_queue(RABBITMQ_VHOST, name)
+        except management.NetworkError:
+            logger.warning("RabbitMQ management API does not seem available")
+            self.available = False
+        except management.HTTPError as ex:
+            logger.warning("Management API answered error code: '{}'".format(ex.status))
+            logger.debug("Reason: {}".format(ex.reason))
+            self.available = False
+        else:
+            self.available = True
+
+        if self.available:
+            for name in self.queue_names:
+                self.queues[name]['messages'] = results[name]['messages']
+        else:
+            self.queues = {name: {} for name in self.queue_names}
+
+        # notify the websocket
+        yield self.notify_observers({
+            'action': 'queues.stats',
+            'queues': self.queues,
+            'available': self.available
+        })
+
+        self._updating = False

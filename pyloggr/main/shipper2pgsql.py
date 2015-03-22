@@ -19,7 +19,7 @@ from ..event import Event, ParsingError, InvalidSignature
 logger = logging.getLogger(__name__)
 
 
-class PgsqlShipper(object):
+class PostgresqlShipper(object):
     """
     PgsqlShipper eats events from RabbitMQ, and inserts them in PostgreSQL
     """
@@ -40,7 +40,7 @@ class PgsqlShipper(object):
         self.consumer = Consumer(rabbitmq_config)
 
     @coroutine
-    def start(self):
+    def launch(self):
         """
         Starts the shipper
 
@@ -56,7 +56,7 @@ class PgsqlShipper(object):
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             yield sleep(60)
-            yield self.start()
+            yield self.launch()
             return
         yield self._get_db_pool()
         self.syslog_ev_queue = self.consumer.start_consuming()
@@ -71,7 +71,7 @@ class PgsqlShipper(object):
         self.stop()
         if not self.shutting_down:
             yield sleep(60)
-            yield self.start()
+            yield self.launch()
 
     @coroutine
     def _get_db_pool(self):
@@ -125,12 +125,12 @@ class PgsqlShipper(object):
             logger.warning("We dont have a pool to PGSQL. Giving up flush. Stopping the consumer.")
             self.stop()
             yield sleep(60)
-            yield self.start()
+            yield self.launch()
             return
         if self.db_pool.closed:
             self.stop()
             yield sleep(60)
-            yield self.start()
+            yield self.launch()
             return
 
         def flush_backthread(messages, tablename):
@@ -189,7 +189,7 @@ class PgsqlShipper(object):
                 msg.nack()
             self.stop()
             yield sleep(60)
-            yield self.start()
+            yield self.launch()
         else:
             for msg in msgs:
                 msg.ack()

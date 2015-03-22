@@ -718,7 +718,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         del cache.syslog[self.task_id]
         clients.unregister_queue()
         if self.publisher:
-            self.publisher.stop()
+            yield self.publisher.stop()
             self.publisher = None
 
         self._reset()

@@ -10,9 +10,9 @@ from concurrent.futures import ThreadPoolExecutor
 from ..rabbitmq import RabbitMQConnectionError
 from ..rabbitmq.publisher import Publisher
 from ..rabbitmq.consumer import Consumer
-from pyloggr.filters import DropException
+from pyloggr.filters import DropException, Filters
 from ..event import Event, ParsingError, InvalidSignature
-from ..config import SLEEP_TIME
+from ..config import SLEEP_TIME, CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +23,18 @@ class EventParser(object):
     back events to RabbitMQ.
     """
 
-    def __init__(self, from_rabbitmq_config, to_rabbitmq_config, filters):
-        """
-        :type filters: pyloggr.filters.Filters
-        """
+    def __init__(self, from_rabbitmq_config, to_rabbitmq_config):
         self.from_rabbitmq_config = from_rabbitmq_config
         self.to_rabbitmq_config = to_rabbitmq_config
-        self.filters = filters
         self.consumer = None
         self.publisher = None
         self._publisher_later = None
         self.shutting_down = None
         self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config['qos'] + 5)
+        self.filters = None
 
     @coroutine
-    def start(self):
+    def launch(self):
         """
         Starts the parser
 
@@ -46,6 +43,10 @@ class EventParser(object):
         Coroutine
         """
 
+        if self.filters is None:
+            self.filters = Filters(CONFIG_DIR)
+            self.filters.open()
+
         self.publisher = Publisher(self.to_rabbitmq_config)
         try:
             closed_publisher_event = yield self.publisher.start()
@@ -53,13 +54,13 @@ class EventParser(object):
             logger.warning("Can't connect to publisher")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
             yield self.stop()
-            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.start)
+            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
             return
         yield self._start_consumer()
         yield closed_publisher_event.wait()
         yield self.stop()
         if not self.shutting_down:
-            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.start)
+            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
 
     @coroutine
     def _start_consumer(self):
@@ -80,20 +81,8 @@ class EventParser(object):
             if (not self.consumer) or self.shutting_down:
                 break
             message = yield message_queue.get()
-            # todo: is apply_filters thread safe?
             future = self.executor.submit(self.apply_filters, message)
             IOLoop.instance().add_future(future, self._publish)
-            # ev = self.apply_filters(message)
-            # if ev is None:
-            #     continue
-            # res = yield self.publisher.publish(
-            #     exchange=self.to_rabbitmq_config['exchange'],
-            #     body=ev.dumps()
-            # )
-            # if res:
-            #     message.ack()
-            # else:
-            #     message.nack()
 
     @coroutine
     def _publish(self, future):
@@ -111,23 +100,29 @@ class EventParser(object):
         else:
             message.nack()
 
+    @coroutine
     def stop(self):
         """
         Stops the parser
         """
         if self.consumer:
-            self.consumer.stop()
+            yield self.consumer.stop()
             self.consumer = None
         if self.publisher:
-            self.publisher.stop()
+            yield self.publisher.stop()
             self.publisher = None
 
+
+
+    @coroutine
     def shutdown(self):
         """
         Shutdowns (stops definitely) the parser
         """
         self.shutting_down = True
-        self.stop()
+        yield self.stop()
+        self.filters.close()
+
 
     def apply_filters(self, message):
         try:
