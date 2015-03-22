@@ -14,7 +14,6 @@ from tornado.process import fork_processes
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, LOGGING_CONFIG, CONFIG_DIR
 from pyloggr.config import FROM_PARSER_TO_RABBITMQ_CONFIG, FROM_RABBITMQ_TO_PARSER_CONFIG
 from pyloggr.main.event_parser import EventParser
-from pyloggr.filters import Filters
 from pyloggr.cache import cache, CacheError
 
 
@@ -23,15 +22,13 @@ LOGGING_CONFIG['handlers']['tofile']['filename'] = PARSER_LOGGING_FILENAME
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger('parser')
 event_parser = None
-filters = None
 
-
+@coroutine
 def shutdown():
-    global event_parser, filters
+    global event_parser
 
     logger.info("Stopping all operations...")
-    event_parser.shutdown()
-    filters.close()
+    yield event_parser.shutdown()
     logger.info('Will stop Tornado in {} seconds ...'.format(MAX_WAIT_SECONDS_BEFORE_SHUTDOWN))
     io_loop = IOLoop.instance()
 
@@ -53,16 +50,13 @@ def sig_handler(sig, frame):
     IOLoop.instance().add_callback_from_signal(shutdown)
 
 @coroutine
-def start_parser():
-    global event_parser, filters
-    filters = Filters(CONFIG_DIR)
-    filters.open()
+def launch():
+    global event_parser
     event_parser = EventParser(
         from_rabbitmq_config=FROM_RABBITMQ_TO_PARSER_CONFIG,
-        to_rabbitmq_config=FROM_PARSER_TO_RABBITMQ_CONFIG,
-        filters=filters
+        to_rabbitmq_config=FROM_PARSER_TO_RABBITMQ_CONFIG
     )
-    yield event_parser.start()
+    yield event_parser.launch()
 
 
 def main():
@@ -78,7 +72,7 @@ def main():
     fork_processes(0)
 
     ioloop = IOLoop.instance()
-    ioloop.add_callback(start_parser)
+    ioloop.add_callback(launch)
     logger.info("Starting the IOLoop")
     ioloop.start()
 

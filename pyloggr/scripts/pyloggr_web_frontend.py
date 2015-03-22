@@ -50,13 +50,11 @@ def sig_handler(sig, frame):
 
 
 @coroutine
-def start():
+def launch():
     global webserver
 
     webserver = WebServer()
-    signal(SIGTERM, sig_handler)
-    signal(SIGINT, sig_handler)
-    yield webserver.start()
+    yield webserver.launch()
 
 
 def main():
@@ -65,7 +63,10 @@ def main():
     except CacheError as err:
         logger.error(err)
         return
-    IOLoop.instance().add_callback(start)
+    signal(SIGTERM, sig_handler)
+    signal(SIGINT, sig_handler)
+
+    IOLoop.instance().add_callback(launch)
     logger.info("Starting the IOLoop")
     IOLoop.instance().start()
 

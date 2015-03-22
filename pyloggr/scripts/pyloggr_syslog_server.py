@@ -56,7 +56,7 @@ def sig_handler(sig, frame):
 
 
 @coroutine
-def start():
+def launch():
     global server
     logger.info("Starting Syslog Server")
     yield server.launch()
@@ -70,6 +70,7 @@ def main():
         logger.error(err)
         return
 
+    # specific
     config = SyslogConfig(SYSLOG_CONF)
     config.bind_all_sockets()
     signal.signal(signal.SIGTERM, sig_handler)
@@ -84,7 +85,7 @@ def main():
         task_id=task_id
     )
 
-    IOLoop.instance().add_callback(start)
+    IOLoop.instance().add_callback(launch)
     logger.info("Starting the IOLoop")
     IOLoop.instance().start()
 

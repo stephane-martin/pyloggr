@@ -11,7 +11,7 @@ from tornado.ioloop import IOLoop
 from tornado.gen import coroutine
 from tornado.process import fork_processes
 
-from pyloggr.main.shipper2pgsql import PgsqlShipper
+from pyloggr.main.shipper2pgsql import PostgresqlShipper
 from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, FROM_RABBITMQ_TO_PGSQL_CONFIG
 from pyloggr.config import LOGGING_CONFIG, PGSQL_CONFIG
 from pyloggr.cache import cache, CacheError
@@ -51,11 +51,11 @@ def sig_handler(sig, frame):
     IOLoop.instance().add_callback_from_signal(shutdown)
 
 @coroutine
-def start():
+def launch():
     global shipper
 
-    shipper = PgsqlShipper(FROM_RABBITMQ_TO_PGSQL_CONFIG, PGSQL_CONFIG)
-    yield shipper.start()
+    shipper = PostgresqlShipper(FROM_RABBITMQ_TO_PGSQL_CONFIG, PGSQL_CONFIG)
+    yield shipper.launch()
 
 
 def main():
@@ -70,9 +70,8 @@ def main():
 
     fork_processes(0)
 
-
     ioloop = IOLoop.instance()
-    ioloop.add_callback(start)
+    ioloop.add_callback(launch)
     logger.info("Starting the IOLoop")
     ioloop.start()
 
