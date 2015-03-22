@@ -216,6 +216,10 @@ class Consumer(object):
         Starts consuming messages from RabbitMQ
         :returns: a message queue
         :rtype: Queue
+
+        Note
+        ====
+        Tornado coroutine
         """
         if self.channel is None:
             return
@@ -229,6 +233,7 @@ class Consumer(object):
         )
         return self.message_queue
 
+    # noinspection PyUnusedLocal
     def _on_message(self, unused_channel, basic_deliver, properties, body):
         """
         Invoked by pika when a message is delivered from RabbitMQ.
@@ -241,20 +246,21 @@ class Consumer(object):
             )
         )
 
+    @coroutine
     def stop_consuming(self):
         """
         Stops consuming messages from RabbitMQ
+
+        Note
+        ====
+        Tornado coroutine
         """
         if self._consumer_tag:
             if self.channel:
                 logger.info('Asking RabbitMQ to cancel the consumer')
-                self.channel.basic_cancel(self._on_consumer_cancelled_by_client, self._consumer_tag)
-        else:
-            self._close_channel()
-
-    def _on_consumer_cancelled_by_client(self, unused_frame):
-        logger.info('RabbitMQ confirmed the cancellation of the consumer')
-        self._consumer_tag = None
+                yield Task(self.channel.basic_cancel, consumer_tag=self._consumer_tag)
+                logger.info('RabbitMQ confirmed the cancellation of the consumer')
+            self._consumer_tag = None
         self._close_channel()
 
     def _on_consumer_cancelled_by_server(self, method_frame):
@@ -265,11 +271,16 @@ class Consumer(object):
         self._consumer_tag = None
         self._close_channel()
 
+    @coroutine
     def stop(self):
         """
         Shutdowns the connection to RabbitMQ and stops the consumer
+
+        Note
+        ====
+        Tornado coroutine
         """
         logger.info('Stopping consumer')
         self.shutting_down = True
-        self.stop_consuming()
+        yield self.stop_consuming()
         logger.info('Stopped consumer')

@@ -25,11 +25,11 @@ class NotificationsConsumer(Consumer, Observable):
         """
         Start consuming notifications from RabbitMQ and notify observers.
         """
-        message_queue = super(NotificationsConsumer, self).start_consuming()
+        message_queue = Consumer.start_consuming(self)
         while True:
             message = yield message_queue.get()
             try:
-                self.notify_observers(ujson.loads(message.body))
+                yield self.notify_observers(ujson.loads(message.body))
             except Exception:
                 logger.exception("Swallowed exception")
 

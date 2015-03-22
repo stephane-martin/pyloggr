@@ -36,7 +36,7 @@ class Publisher(object):
         self.rabbitmq_config = rabbitmq_config
         self.connection = None
         self.channel = None
-        self.shutting_down = False
+        self.connection_has_been_closed_event = None
 
         self._reset_counters()
 
@@ -62,7 +62,6 @@ class Publisher(object):
         Coroutine
         """
         logger.info("Connecting to RabbitMQ publisher")
-        self.shutting_down = False
         error_connect_future = Future()
         connect_future = Future()
 
@@ -72,19 +71,15 @@ class Publisher(object):
         def on_connect_open(conn):
             connect_future.set_result((True, conn, None))
 
-        ev = Event()
+        self.connection_has_been_closed_event = Event()
 
         # noinspection PyUnusedLocal
         def on_connection_close(conn, reply_code, reply_text):
             logger.info("Connection to RabbitMQ publisher has been closed")
             self.connection = None
             self.channel = None
-            if self.shutting_down:
-                # its a normal shutdown
-                self.shutting_down = False
-            else:
-                # unexpected connection closed, let's notify the client
-                ev.set()
+            # notify who is using the publisher
+            self.connection_has_been_closed_event.set()
 
         # noinspection PyUnusedLocal
         def on_channel_close(chan, reply_code, reply_text):
@@ -115,7 +110,7 @@ class Publisher(object):
         self.channel.confirm_delivery(self._on_delivery_confirmation)
         self.channel.add_on_close_callback(on_channel_close)
         # give an Event object to client, so that it can detect when connection has been closed
-        raise Return(ev)
+        raise Return(self.connection_has_been_closed_event)
 
     @coroutine
     def publish(self, exchange, body, routing_key='', message_id=None, headers=None,
@@ -244,14 +239,19 @@ class Publisher(object):
 
         logger.info("'Publisher: {}' deliveries on '{}' messages".format(self._ack + self._nack, self._delivery_tag))
 
+    @coroutine
     def stop(self):
         """
         Stops the publisher
+
+        Note
+        ====
+        Tornado coroutine
         """
         if self.connection is None:
             return
         if self.connection.is_closed or self.connection.is_closing:
             return
-        self.shutting_down = True
         self.connection.close()
+        yield self.connection_has_been_closed_event.wait()
 
