@@ -33,8 +33,9 @@ with open('HISTORY.rst') as history_file:
 requirements = [
     'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis',
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
-    'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit',
-    'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser'
+    'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh', 'momoko',
+    'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
+    'requests_futures'
 ]
 
 if on_rtd:
@@ -52,7 +53,7 @@ test_requirements = [
 if __name__ == "__main__":
     setup(
         name='pyloggr',
-        version='0.1.1',
+        version='0.1.2',
         description='Centralize, parse, store and search logs',
         long_description=readme + '\n\n' + history,
         author='Stephane Martin',
