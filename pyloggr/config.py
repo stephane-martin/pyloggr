@@ -7,11 +7,15 @@ PYLOGGR_CONFIG_DIR envvar must be defined to some directory that actually contai
 
 __author__ = 'stef'
 
-
-
 import os
 import sys
 from os.path import join, dirname
+# TODO: refactor so that
+# - the configuration is returned as an object
+# - the configuration is read from a .ini file
+# - run main script can provide the .ini path
+# - if no .ini path as argument, look for the env variable
+# - if no env variable, look in ~/.pyloggr directory
 
 CONFIG_ENV = os.environ.get('PYLOGGR_CONFIG_DIR')
 
