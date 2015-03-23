@@ -228,12 +228,13 @@ class ConfigSchema(Schema):
     def make_object(self, data):
         return Config(**data)
 
+slots = ['LOGGING_LEVEL', 'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
+        'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
+        'RABBITMQ_HTTP', 'POSTGRESQL']
 
 class Config(object):
     schema = ConfigSchema()
-    __slots__ = ['LOGGING_LEVEL', 'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
-                 'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-                 'RABBITMQ_HTTP', 'POSTGRESQL']
+    __slots__ = slots
 
     def __init__(self, LOGGING_LEVEL, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, SLEEP_TIME,
                  NOTIFICATIONS, PARSER_CONSUMER, PARSER_PUBLISHER, PGSQL_CONSUMER, SYSLOG_PUBLISHER,
@@ -279,6 +280,10 @@ class Config(object):
         return c
 
 
+def set_logging(filename):
+    LOGGING_CONFIG['handlers']['tofile']['filename'] = filename
+    logging.config.dictConfig(LOGGING_CONFIG)
+
 
 
 # TODO: refactor so that
@@ -289,10 +294,14 @@ class Config(object):
 # - if no env variable, look in ~/.pyloggr directory
 
 CONFIG_DIR = os.environ.get('PYLOGGR_CONFIG_DIR')
-config = Config.load_from_directory(CONFIG_DIR)
 thismodule = sys.modules[__name__]
-for attr in config.__slots__:
-    setattr(thismodule, attr, getattr(config, attr))
+if os.environ.get('SPHINX_BUILD'):
+    for attr in slots:
+        setattr(thismodule, attr, 'Mock')
+else:
+    config = Config.load_from_directory(CONFIG_DIR)
+    for attr in slots:
+        setattr(thismodule, attr, getattr(config, attr))
 
 
 
@@ -339,6 +348,4 @@ LOGGING_CONFIG = {
 }
 
 
-def set_logging(filename):
-    LOGGING_CONFIG['handlers']['tofile']['filename'] = filename
-    logging.config.dictConfig(LOGGING_CONFIG)
+

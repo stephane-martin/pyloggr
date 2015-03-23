@@ -5,6 +5,7 @@ import os
 sys.path.insert(0, os.path.abspath('../..'))
 from mock import MagicMock
 
+os.environ['SPHINX_BUILD'] = "True"
 
 class Mock(MagicMock):
     @classmethod
