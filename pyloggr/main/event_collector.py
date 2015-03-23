@@ -119,7 +119,7 @@ class EventCollector(object):
                 continue
 
             publish_futures[bytes_event] = self.publisher.publish_event(
-                self.rabbitmq_config['exchange'], event, 'pyloggr.syslog.0'
+                self.rabbitmq_config.exchange, event, 'pyloggr.syslog.0'
             )
 
         results = yield publish_futures

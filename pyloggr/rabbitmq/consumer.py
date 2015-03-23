@@ -65,15 +65,14 @@ class Consumer(object):
     def __init__(self, rabbitmq_config, binding_key=None):
         """
         :param rabbitmq_config: RabbitMQ connection configuration
-        :type rabbitmq_config: dict
         :param binding_key: optional binding key
         :type binding_key: str
         """
         self._parameters = ConnectionParameters(
-            host=rabbitmq_config['host'],
-            port=rabbitmq_config['port'],
-            credentials=PlainCredentials(rabbitmq_config['user'], rabbitmq_config['password']),
-            virtual_host=rabbitmq_config['vhost']
+            host=rabbitmq_config.host,
+            port=rabbitmq_config.port,
+            credentials=PlainCredentials(rabbitmq_config.user, rabbitmq_config.password),
+            virtual_host=rabbitmq_config.vhost
         )
         self.rabbitmq_config = rabbitmq_config
         self.binding_key = binding_key
@@ -159,9 +158,9 @@ class Consumer(object):
         self.channel = channel
         self.channel.add_on_close_callback(on_channel_closed)
         self.message_queue = Queue()
-        if 'queue' in self.rabbitmq_config:
+        if getattr(self.rabbitmq_config, 'queue', None):
             # durable queue has already been declared
-            queue_name = self.rabbitmq_config['queue']
+            queue_name = self.rabbitmq_config.queue
             logger.info("Consumer: declaring queue '{}'".format(queue_name))
             yield Task(
                 self.channel.queue_declare,
@@ -175,7 +174,7 @@ class Consumer(object):
         else:
             # we build an transient queue
             queue_name = "consumer_" + str(randint(1, 1000000))
-            self.rabbitmq_config['queue'] = queue_name
+            self.rabbitmq_config.queue = queue_name
             logger.info("Consumer: declaring queue '{}'".format(queue_name))
             yield Task(
                 self.channel.queue_declare,
@@ -189,11 +188,10 @@ class Consumer(object):
             yield Task(
                 self.channel.queue_bind,
                 queue=queue_name,
-                exchange=self.rabbitmq_config['exchange'],
+                exchange=self.rabbitmq_config.exchange,
                 routing_key=self.binding_key,
             )
             logger.info("Queue has been checked and declared OK and bound. Ready to consume.")
-
 
         # give an Event object to client, so that it can detect when connection has been closed
         raise Return(closed_event)
@@ -229,7 +227,7 @@ class Consumer(object):
         self.channel.add_on_cancel_callback(self._on_consumer_cancelled_by_server)
         self._consumer_tag = self.channel.basic_consume(
             consumer_callback=self._on_message,
-            queue=self.rabbitmq_config['queue']
+            queue=self.rabbitmq_config.queue
         )
         return self.message_queue
 

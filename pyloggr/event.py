@@ -17,7 +17,6 @@ from arrow import Arrow
 from marshmallow import Schema, fields
 from marshmallow.exceptions import UnmarshallingError
 from future.utils import python_2_unicode_compatible, raise_from
-from builtins import str as text
 # noinspection PyPackageRequirements
 import past.builtins
 from cryptography.hazmat.backends import default_backend
@@ -31,7 +30,6 @@ from .utils.fix_unicode import to_unicode
 from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
 from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
 from .config import HMAC_KEY
-
 
 logger = logging.getLogger(__name__)
 hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
@@ -186,10 +184,6 @@ class Event(object):
     trusted_cmdline: str
     cfields: list of CField
     tags: set of str
-
-    Todo
-    ====
-    delete iut field ?
 
     """
     schema = EventSchema()
@@ -537,7 +531,6 @@ class Event(object):
             event_dict['syslogtag'] = event_dict['app_name']
 
         ev = cls._load_dictionnary(event_dict)
-
 
         if flds['STRUCTUREDDATA'] != '-':
             ev.add_tags('rfc5424 structured data')

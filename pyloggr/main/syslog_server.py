@@ -188,7 +188,7 @@ class SyslogClientConnection(object):
             self.nb_messages_received += 1
 
             status = yield self.publisher.publish_event(
-                exchange=self.rabbitmq_config['exchange'],
+                exchange=self.rabbitmq_config.exchange,
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
             )
@@ -235,7 +235,7 @@ class SyslogClientConnection(object):
             self.nb_messages_received += 1
 
             status = yield self.publisher.publish_event(
-                exchange=self.rabbitmq_config['exchange'],
+                exchange=self.rabbitmq_config.exchange,
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
             )
@@ -492,21 +492,21 @@ class SyslogConfig(object):
         protocol_to_port = dict()
         port_to_protocol = dict()
 
-        if conf.get('relp_port', None) is not None:
-            protocol_to_port['relp'] = int(conf['relp_port'])
-            port_to_protocol[int(conf['relp_port'])] = 'relp'
-        if conf.get('tcp_port', None) is not None:
-            protocol_to_port['tcp'] = int(conf['tcp_port'])
-            port_to_protocol[int(conf['tcp_port'])] = 'tcp'
-        if conf.get('ssl', None) is not None:
-            if conf.get('tcpssl_port', None) is not None:
-                protocol_to_port['tcpssl'] = int(conf['tcpssl_port'])
-                port_to_protocol[int(conf['tcpssl_port'])] = 'tcpssl'
-            if conf.get('relpssl_port', None) is not None:
-                protocol_to_port['relpssl'] = int(conf['relpssl_port'])
-                port_to_protocol[int(conf['relpssl_port'])] = 'relpssl'
+        if getattr(conf, 'relp_port', None) is not None:
+            protocol_to_port['relp'] = int(conf.relp_port)
+            port_to_protocol[int(conf.relp_port)] = 'relp'
+        if getattr(conf, 'tcp_port', None) is not None:
+            protocol_to_port['tcp'] = int(conf.tcp_port)
+            port_to_protocol[int(conf.tcp_port)] = 'tcp'
+        if getattr(conf, 'ssl', None) is not None:
+            if getattr(conf, 'tcpssl_port', None) is not None:
+                protocol_to_port['tcpssl'] = int(conf.tcpssl_port)
+                port_to_protocol[int(conf.tcpssl_port)] = 'tcpssl'
+            if getattr(conf, 'relpssl_port', None) is not None:
+                protocol_to_port['relpssl'] = int(conf.relpssl_port)
+                port_to_protocol[int(conf.relpssl_port)] = 'relpssl'
 
-        self.unix_socket_name = conf.get('unix_socket', None)
+        self.unix_socket_name = getattr(conf, 'unix_socket', None)
         if self.unix_socket_name is not None:
             protocol_to_port['socket'] = self.unix_socket_name
             port_to_protocol[self.unix_socket_name] = 'socket'
@@ -518,7 +518,7 @@ class SyslogConfig(object):
 
     @property
     def ssl(self):
-        return self.conf.get('ssl', None)
+        return getattr(self.conf, 'ssl', None)
 
     def is_port_ssl(self, port):
         """
@@ -529,11 +529,9 @@ class SyslogConfig(object):
         :rtype: bool
 
         """
-        if 'ssl' not in self.conf:
+        if not getattr(self.conf, 'ssl', None):
             return False
-        if self.conf['ssl'] is None:
-            return False
-        return port == self.conf.get('tcpssl_port', None) or port == self.conf.get('relpssl_port', None)
+        return port == getattr(self.conf, 'tcpssl_port', None) or port == getattr(self.conf, 'relpssl_port', None)
 
     def get_connection_type(self, port):
         """
@@ -549,7 +547,7 @@ class SyslogConfig(object):
 
         """
         address = ''
-        if self.conf.get('localhost_only', None):
+        if getattr(self.conf, 'localhost_only', None):
             address = '127.0.0.1'
 
         numeric_ports = [port for port in self.port_to_protocol if str(port).isdigit()]

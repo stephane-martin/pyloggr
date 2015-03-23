@@ -31,8 +31,8 @@ class PostgresqlShipper(object):
         self.syslog_ev_queue = None
         self.periodic_check_queue_size = None
         self.dsn = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
-            self.pgsql_config['dbname'], self.pgsql_config['user'], self.pgsql_config['password'],
-            self.pgsql_config['host'], self.pgsql_config['port'], self.pgsql_config['connect_timeout']
+            self.pgsql_config.dbname, self.pgsql_config.user, self.pgsql_config.password,
+            self.pgsql_config.host, self.pgsql_config.port, self.pgsql_config.connect_timeout
         )
         self.db_pool = None
         self.shutting_down = None
@@ -79,7 +79,7 @@ class PostgresqlShipper(object):
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             self.db_pool = yield executor.submit(
-                ThreadedConnectionPool, 1, self.pgsql_config['max_pool'], self.dsn, async=False
+                ThreadedConnectionPool, 1, self.pgsql_config.max_pool, self.dsn, async=False
             )
         except:
             logger.exception("Can't connect to PGSQL")
@@ -109,7 +109,7 @@ class PostgresqlShipper(object):
     @coroutine
     def _check_queue_size(self):
         self._times += 1
-        if self._times >= self.pgsql_config['max_seconds_without_flush'] or self.syslog_ev_queue.qsize() >= 500:
+        if self._times >= self.pgsql_config.max_seconds_without_flush or self.syslog_ev_queue.qsize() >= 500:
             self._times = 0
             yield self._flush_messages()
 
@@ -181,7 +181,7 @@ class PostgresqlShipper(object):
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             yield executor.submit(
-                flush_backthread, messages=msgs, tablename=self.pgsql_config['tablename']
+                flush_backthread, messages=msgs, tablename=self.pgsql_config.tablename
             )
         except:
             logger.exception("Flushing to PGSQL failed")

@@ -13,7 +13,6 @@ from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
 from tornado.gen import coroutine, Task
 from tornado.ioloop import PeriodicCallback, IOLoop
-from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, PackageLoader
 import momoko
 import psycopg2
@@ -23,14 +22,17 @@ from ..rabbitmq import management
 from ..rabbitmq.notifications_consumer import NotificationsConsumer
 from ..rabbitmq import RabbitMQConnectionError
 from ..utils.observable import Observable
-from ..config import RABBITMQ_NOTIFICATIONS_CONFIG, COOKIE_SECRET, RABBITMQ_HTTP, RABBITMQ_PASSWORD, RABBITMQ_USER
-from ..config import RABBITMQ_VHOST, FROM_RABBITMQ_TO_PARSER_CONFIG, FROM_RABBITMQ_TO_PGSQL_CONFIG
-from ..config import PGSQL_CONFIG
+from ..config import NOTIFICATIONS, RABBITMQ_HTTP
+from ..config import PARSER_CONSUMER, PGSQL_CONSUMER
+from ..config import POSTGRESQL
 from ..cache import cache
 
+# todo: integrate in config
+COOKIE_SECRET = "lkqsdhfosqfhqz:foez"
+
 DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
-    PGSQL_CONFIG['dbname'], PGSQL_CONFIG['user'], PGSQL_CONFIG['password'],
-    PGSQL_CONFIG['host'], PGSQL_CONFIG['port'], PGSQL_CONFIG['connect_timeout']
+    POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password,
+    POSTGRESQL.host, POSTGRESQL.port, POSTGRESQL.connect_timeout
 )
 
 logger = logging.getLogger(__name__)
@@ -146,7 +148,7 @@ class WebServer(object):
     Pyloggr process for the web frontend part
     """
     def __init__(self):
-        self.consumer = NotificationsConsumer(RABBITMQ_NOTIFICATIONS_CONFIG, 'pyloggr.*.*')
+        self.consumer = NotificationsConsumer(NOTIFICATIONS, 'pyloggr.*.*')
         self.app = PyloggrApplication('/syslog', self.consumer)
         self.http_server = HTTPServer(self.app)
         self.sockets = bind_sockets(8888)
@@ -211,7 +213,7 @@ class PgSQLStats(Observable):
         stats = None
         try:
             db_conn = yield momoko.Op(momoko.Connection().connect, DSN)
-            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(PGSQL_CONFIG['tablename']))
+            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(POSTGRESQL.tablename))
             stats = cursor.fetchone()[0]
         except psycopg2.Error:
             logger.exception("Database seems down")
@@ -238,7 +240,7 @@ class RabbitMQStats(Observable):
     """
     Gather information from RabbitMQ management API
     """
-    queue_names = [FROM_RABBITMQ_TO_PARSER_CONFIG['queue'], FROM_RABBITMQ_TO_PGSQL_CONFIG['queue']]
+    queue_names = [PARSER_CONSUMER.queue, PGSQL_CONSUMER.queue]
 
     def __init__(self):
         self.queues = {name: {} for name in self.queue_names}
@@ -247,8 +249,8 @@ class RabbitMQStats(Observable):
 
         self._rabbitmq_api_client = management.Client(
             host=RABBITMQ_HTTP,
-            user=RABBITMQ_USER,
-            passwd=RABBITMQ_PASSWORD,
+            user=NOTIFICATIONS.user,
+            passwd=NOTIFICATIONS.password,
             timeout=13
         )
         Observable.__init__(self)
@@ -262,7 +264,7 @@ class RabbitMQStats(Observable):
         results = dict()
         try:
             for name in self.queue_names:
-                results[name] = yield self._rabbitmq_api_client.get_queue(RABBITMQ_VHOST, name)
+                results[name] = yield self._rabbitmq_api_client.get_queue(NOTIFICATIONS.vhost, name)
         except management.NetworkError:
             logger.warning("RabbitMQ management API does not seem available")
             self.available = False

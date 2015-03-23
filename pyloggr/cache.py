@@ -14,7 +14,7 @@ Note
 ====
 
 In a development environment, if Redis has not been started by the OS, Redis can be started directly by
-pyloggr using configuration item ``REDIS_CONFIG['try_spawn_redis'] = True``
+pyloggr using configuration item ``REDIS['try_spawn_redis'] = True``
 
 
 
@@ -36,7 +36,7 @@ from subprocess32 import Popen
 from redis import StrictRedis, RedisError
 from ujson import dumps, loads
 
-from .config import REDIS_CONFIG
+from .config import REDIS
 
 syslog_key = 'pyloggr.syslog.server.'
 rescue_key = 'pyloggr.rescue_queue'
@@ -150,25 +150,25 @@ class Cache(object):
     @classmethod
     def _connect_to_redis(cls):
         cls.redis_conn = StrictRedis(
-            host=REDIS_CONFIG['host'],
-            port=REDIS_CONFIG['port'],
-            password=REDIS_CONFIG['password'],
+            host=REDIS.host,
+            port=REDIS.port,
+            password=REDIS.password,
             decode_responses=False
         )
         try:
             cls.redis_conn.ping()
         except RedisError:
-            if REDIS_CONFIG['try_spawn_redis']:
+            if REDIS.try_spawn_redis:
                 cls._temp_redis_output_file = TemporaryFile()
                 try:
                     logger.info("Try to launch Redis instance")
                     cls.redis_child = Popen(
-                        args=[REDIS_CONFIG['path'], REDIS_CONFIG['config_file']], close_fds=True,
+                        args=[REDIS.path, REDIS.config_file], close_fds=True,
                         stdout=cls._temp_redis_output_file, stderr=cls._temp_redis_output_file,
                         start_new_session=True
                     )
                 except OSError:
-                    raise CacheError("Spawning Redis failed, please check REDIS_CONFIG['path']")
+                    raise CacheError("Spawning Redis failed, please check REDIS.path")
                 except ValueError:
                     raise CacheError("Spawning Redis failed because of invalid configuration")
                 except:
@@ -182,7 +182,7 @@ class Cache(object):
         Cache initialization.
 
         `initialize` tries to connect to redis and sets `redis_conn` class variable. If connection fails and
-        ``REDIS_CONFIG['try_spawn_redis']`` is set, it also tries to spawn the Redis process.
+        ``REDIS['try_spawn_redis']`` is set, it also tries to spawn the Redis process.
 
         :raise CacheError: when redis initialization fails
         """

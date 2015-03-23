@@ -30,8 +30,6 @@ class PyloggrProcess(object):
         self.pyloggr_process = None
 
     def main(self):
-        LOGGING_CONFIG['handlers']['tofile']['filename'] = self.logging_file
-        logging.config.dictConfig(LOGGING_CONFIG)
         self.logger = logging.getLogger('pyloggr')
 
         try:

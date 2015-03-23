@@ -28,10 +28,10 @@ class Publisher(object):
     def __init__(self, rabbitmq_config):
 
         self._parameters = pika.ConnectionParameters(
-            host=rabbitmq_config['host'],
-            port=rabbitmq_config['port'],
-            credentials=pika.PlainCredentials(rabbitmq_config['user'], rabbitmq_config['password']),
-            virtual_host=rabbitmq_config['vhost']
+            host=rabbitmq_config.host,
+            port=rabbitmq_config.port,
+            credentials=pika.PlainCredentials(rabbitmq_config.user, rabbitmq_config.password),
+            virtual_host=rabbitmq_config.vhost
         )
         self.rabbitmq_config = rabbitmq_config
         self.connection = None
@@ -167,8 +167,8 @@ class Publisher(object):
         publish_properties = pika.BasicProperties(
             content_type=content_type,
             content_encoding=content_encoding,
-            app_id=self.rabbitmq_config['application_id'],
-            type=self.rabbitmq_config['event_type'],
+            app_id=self.rabbitmq_config.application_id,
+            type=self.rabbitmq_config.event_type,
             delivery_mode=mode,
             message_id=message_id,
             headers=headers

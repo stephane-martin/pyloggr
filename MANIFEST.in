@@ -8,6 +8,6 @@ recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 
 recursive-include docs *.rst conf.py Makefile make.bat
-recursive-include config *.txt *.patterns *.py *.conf
+recursive-include config *.txt *.patterns *.py *.conf *.sample *_config *_plugins
 exclude config/secrets.py
 exclude config/geoip/GeoLite2-City.mmdb

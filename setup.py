@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
-import os, sys
-from os.path import dirname, abspath, join, commonprefix
+import os
+from os.path import dirname, abspath, join, commonprefix, expanduser
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
 here = abspath(dirname(__file__))
@@ -35,7 +35,7 @@ requirements = [
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh', 'momoko',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
-    'requests_futures'
+    'requests_futures', 'configobj'
 ]
 
 if on_rtd:
@@ -82,15 +82,12 @@ if __name__ == "__main__":
         ],
         entry_points={
             'console_scripts': [
-                'pyloggr_parser = pyloggr.scripts.pyloggr_parser:main',
-                'pyloggr_shipper_pgsql = pyloggr.scripts.pyloggr_shipper_pgsql:main',
-                'pyloggr_syslog_server = pyloggr.scripts.pyloggr_syslog_server:main',
-                'pyloggr_web_frontend = pyloggr.scripts.pyloggr_web_frontend:main'
+                'pyloggrc = pyloggr.scripts.pyloggrc:main'
             ]
         },
 
         data_files=[
-            (join('~/.config', root), list_of_files) for root, list_of_files in list_subdir('config')
+            (join(expanduser('~/.config'), root), list_of_files) for root, list_of_files in list_subdir('config')
         ],
 
         test_suite='tests',

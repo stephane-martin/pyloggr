@@ -30,7 +30,7 @@ class EventParser(object):
         self.publisher = None
         self._publisher_later = None
         self.shutting_down = None
-        self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config['qos'] + 5)
+        self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config.qos + 5)
         self.filters = None
 
     @coroutine
@@ -66,7 +66,7 @@ class EventParser(object):
     def _start_consumer(self):
         self.consumer = Consumer(self.from_rabbitmq_config)
         try:
-            yield self.consumer.start(self.from_rabbitmq_config['qos'])
+            yield self.consumer.start(self.from_rabbitmq_config.qos)
         except RabbitMQConnectionError:
             logger.warning("Can't connect to consumer")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
@@ -92,7 +92,7 @@ class EventParser(object):
             message.ack()
             return
         res = yield self.publisher.publish(
-            exchange=self.to_rabbitmq_config['exchange'],
+            exchange=self.to_rabbitmq_config.exchange,
             body=ev.dumps()
         )
         if res:
