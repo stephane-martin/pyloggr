@@ -5,6 +5,7 @@ History
 =======
 
 **0.1.3 (2015-03-23)**
+
 * refactored the configuration handling
 * launchers were refactored
 
