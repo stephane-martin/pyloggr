@@ -24,7 +24,6 @@ pyloggr using configuration item ``REDIS['try_spawn_redis'] = True``
 
 """
 
-# todo: handle redis exceptions, so that redis is not mandatory for syslog server
 
 __author__ = 'stef'
 
@@ -51,7 +50,7 @@ class CacheError(Exception):
 
 class SyslogCache(object):
     """
-    Stores information about the running pyloggr's syslog services in a Redis cache
+    Stores information about the running pyloggr's syslog processes in a Redis cache
 
     Parameters
     ----------
@@ -65,36 +64,50 @@ class SyslogCache(object):
         assert(isinstance(redis_conn, StrictRedis))
         self.redis_conn = redis_conn
         self.task_id = task_id
-        self.hash_name = syslog_key + str(task_id)
+        self.hash_name = syslog_key + '_' + str(task_id)
 
     @property
     def status(self):
-        return self.redis_conn.hget(self.hash_name, 'status') == "True"
+        try:
+            return self.redis_conn.hget(self.hash_name, 'status') == "True"
+        except RedisError:
+            return None
 
     @status.setter
     def status(self, new_status):
-        if not new_status:
-            # syslog server has been shut down
-            self.clients = []
-
-        self.redis_conn.hset(self.hash_name, 'status', str(new_status))
+        try:
+            if new_status:
+                self.redis_conn.sadd(syslog_key, self.task_id)
+            else:
+                # syslog server has been shut down
+                self.clients = []
+                self.redis_conn.srem(syslog_key, self.task_id)
+            self.redis_conn.hset(self.hash_name, 'status', str(new_status))
+        except RedisError:
+            pass
 
     @property
     def clients(self):
-        buf = self.redis_conn.hget(self.hash_name, 'clients')
-        return loads(buf) if buf else []
+        try:
+            buf = self.redis_conn.hget(self.hash_name, 'clients')
+            return loads(buf) if buf else []
+        except RedisError:
+            return None
 
     @clients.setter
     def clients(self, new_clients):
-        if self.status:
-            if hasattr(new_clients, 'values'):
-                self.redis_conn.hset(self.hash_name, 'clients', dumps(
-                    [client.props for client in new_clients.values()]
-                ))
-            else:
-                self.redis_conn.hset(self.hash_name, 'clients', dumps(
-                    [client.props for client in new_clients]
-                ))
+        try:
+            if self.status:
+                if hasattr(new_clients, 'values'):
+                    self.redis_conn.hset(self.hash_name, 'clients', dumps(
+                        [client.props for client in new_clients.values()]
+                    ))
+                else:
+                    self.redis_conn.hset(self.hash_name, 'clients', dumps(
+                        [client.props for client in new_clients]
+                    ))
+        except RedisError:
+            pass
 
 
 class SyslogServerList(object):
@@ -103,32 +116,39 @@ class SyslogServerList(object):
         :type redis_conn: StrictRedis
         """
         self.redis_conn = redis_conn
+        self._syslog_servers_dict = dict()
 
     def __getitem__(self, task_id):
-        return SyslogCache(self.redis_conn, task_id)
+        if task_id not in self._syslog_servers_dict:
+            self._syslog_servers_dict[task_id] = SyslogCache(self.redis_conn, task_id)
+        return self._syslog_servers_dict[task_id]
 
     def __setitem__(self, key, value):
         raise NotImplementedError
 
     def __delitem__(self, task_id):
-        hash_name = syslog_key + str(task_id)
-        self.redis_conn.delete(hash_name)
+        hash_name = syslog_key + '_' + str(task_id)
+        try:
+            self.redis_conn.srem(syslog_key, task_id)
+            self.redis_conn.delete(hash_name)
+        except RedisError:
+            pass
 
     def __len__(self):
-        i = 0
-        while True:
-            if self.redis_conn.exists(syslog_key + str(i)):
-                i += 1
-            else:
-                break
-        return i
+        try:
+            return self.redis_conn.scard(syslog_key)
+        except RedisError:
+            return None
 
     def keys(self):
-        return range(self.__len__())
+        try:
+            return list(self.redis_conn.smembers(syslog_key))
+        except RedisError:
+            return None
 
     def __iter__(self):
-        res = [self[task_id] for task_id in self.keys()]
-        return iter(res)
+        k = self.keys()
+        return iter(k) if k else iter([])
 
 
 class Cache(object):
@@ -143,9 +163,11 @@ class Cache(object):
     redis_conn = None
     redis_child = None
     _temp_redis_output_file = None
+    _syslog = None
+    _rescue = None
 
     def __init__(self):
-        self._rescue = None
+        pass
 
     @classmethod
     def _connect_to_redis(cls):
@@ -188,6 +210,8 @@ class Cache(object):
         """
         if cls.redis_conn is None:
             cls._connect_to_redis()
+        cls._syslog = SyslogServerList(cls.redis_conn)
+        cls._rescue = RescueQueue(cls.redis_conn)
 
     @classmethod
     def shutdown(cls):
@@ -199,12 +223,10 @@ class Cache(object):
 
     @property
     def syslog(self):
-        return SyslogServerList(self.redis_conn)
+        return self._syslog
 
     @property
     def rescue(self):
-        if self._rescue is None:
-            self._rescue = RescueQueue(self.redis_conn)
         return self._rescue
 
     @property
