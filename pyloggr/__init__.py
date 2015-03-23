@@ -7,5 +7,5 @@ Base package for all pyloggr stuff
 
 __author__ = 'Stephane Martin'
 __email__ = 'stephane.martin_github@vesperal.eu'
-__version__ = '0.1.2'
+__version__ = '0.1.3'
 

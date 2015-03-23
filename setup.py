@@ -53,7 +53,7 @@ test_requirements = [
 if __name__ == "__main__":
     setup(
         name='pyloggr',
-        version='0.1.2',
+        version='0.1.3',
         description='Centralize, parse, store and search logs',
         long_description=readme + '\n\n' + history,
         author='Stephane Martin',

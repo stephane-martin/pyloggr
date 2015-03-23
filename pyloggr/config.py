@@ -285,14 +285,6 @@ def set_logging(filename):
     logging.config.dictConfig(LOGGING_CONFIG)
 
 
-
-# TODO: refactor so that
-# - the configuration is returned as an object
-# - the configuration is read from a .ini file
-# - run main script can provide the .ini path
-# - if no .ini path as argument, look for the env variable
-# - if no env variable, look in ~/.pyloggr directory
-
 CONFIG_DIR = os.environ.get('PYLOGGR_CONFIG_DIR')
 thismodule = sys.modules[__name__]
 if os.environ.get('SPHINX_BUILD'):
@@ -302,8 +294,6 @@ else:
     config = Config.load_from_directory(CONFIG_DIR)
     for attr in slots:
         setattr(thismodule, attr, getattr(config, attr))
-
-
 
 LOGGING_CONFIG = {
     'version': 1,
