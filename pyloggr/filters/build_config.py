@@ -541,8 +541,8 @@ class IfBlock(object):
     def __str__(self):
         return "IfBlock {} ({}) else ({})".format(
             self.condition,
-            ','.join([statement.typ for statement in self.statements]),
-            ','.join([statement.typ for statement in self.else_statements])
+            ','.join([getattr(statement, 'typ', 'Instruction') for statement in self.statements]),
+            ','.join([getattr(statement, 'typ', 'Instruction') for statement in self.else_statements])
         )
 
     def __repr__(self):
