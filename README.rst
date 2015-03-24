@@ -2,6 +2,7 @@ Overview
 --------
 
 pyloggr is a set of tools to
+
 - centralize logs
 - parse logs and apply some filters
 - store logs in a convenient database
