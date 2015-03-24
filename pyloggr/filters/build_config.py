@@ -16,12 +16,10 @@ from future.utils import raise_from
 from future.builtins import str as text
 from ..utils.fix_unicode import to_unicode
 
-# todo: permettre les affectations simples comme filtre
-
 
 class Constant(object):
     def __init__(self, name):
-        self.name = name
+        self.name = to_unicode(name)
 
     def __str__(self):
         return "C({})".format(self.name)
@@ -41,7 +39,7 @@ def quoted_string_to_constant(s, loc, toks):
 
 class Field(object):
     def __init__(self, name):
-        self.name = name
+        self.name = to_unicode(name)
 
     def __str__(self):
         return "F({})".format(self.name)
@@ -54,12 +52,15 @@ class Field(object):
 
 
 class ExtendedField(Field):
+    def __init__(self, name):
+        Field.__init__(self, name)
+        self.name = to_unicode(self.name.name if isinstance(self.name, Constant) else self.name)
+
     def __str__(self):
         return "EField({})".format(self.name)
 
     def apply(self, ev):
-        name = self.name.name if isinstance(self.name, Constant) else self.name
-        return ev.fields_as_dict.get(name, None)
+        return ev.fields_as_dict.get(self.name, None)
 
 
 class PlainField(Field):
@@ -299,6 +300,8 @@ class ConfigParser(object):
         not_operand     = Keyword('not')
 
         equals          = Literal('==')
+        assign          = Suppress(Literal(':='))
+        tags_assign     = Literal('+=') | Literal('-=')
         different       = Literal('!=')
         in_op           = Keyword('in')
         notin_op        = Keyword('notin')
@@ -379,11 +382,27 @@ class ConfigParser(object):
 
         filter_argument = my_qs | plain_field | extended_field
         filter_arguments = Optional(delimitedList(filter_argument)).setResultsName('arguments')
-        filter_statement = (filter_name + Optional(open_par + filter_arguments + close_par)).setParseAction(make_filter)
+        filter_statement = (filter_name + Optional(open_par + filter_arguments + close_par)).setParseAction(
+            make_filter
+        )
+
+        built_string = Group(delimitedList(expr=(plain_field | extended_field | my_qs), delim='+'))
+
+        assignment = Group(extended_field + assign + built_string).setParseAction(
+            make_assignment
+        )
+
+        tags_assignment = Group(Suppress(tags) + tags_assign + built_string).setParseAction(
+            make_tags_assignment
+        )
+
+
 
         if_block = Forward()
         if_filter_block = Forward()
-        general_block = Suppress(comment_line) | filter_statement | if_block | if_filter_block
+        general_block = Suppress(comment_line) | filter_statement | if_block | if_filter_block | assignment | \
+            tags_assignment
+
         if_block << Group(
             if_cond +
             condition +
@@ -420,6 +439,64 @@ def make_if_block(toks):
 
 def make_if_filter_block(toks):
     return IfFilterBlock.from_tokens(toks[0])
+
+def make_assignment(toks):
+    return Assignment.from_tokens(toks[0])
+
+def make_tags_assignment(toks):
+    return TagsAssignment.from_tokens(toks[0])
+
+
+class Assignment(object):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+        print "****", right
+
+    def str(self):
+        return '`{} := {}`'.format(self.left, self.right)
+
+    def __str__(self):
+        return self.str()
+
+    def __repr__(self):
+        return self.str()
+
+    def apply(self, ev):
+        strings = map(lambda s: s.apply(ev), self.right)
+        ev[self.left.name] = u''.join([s for s in strings if s is not None])
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return Assignment(toks[0], toks[1])
+
+
+class TagsAssignment(object):
+    def __init__(self, operand, right):
+        self.operand = operand
+        self.right = right
+
+    def str(self):
+        return '`tags mod: {} {}`'.format(self.operand, self.right)
+
+    def __str__(self):
+        return self.str()
+
+    def __repr__(self):
+        return self.str()
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return TagsAssignment(toks[0], toks[1])
+
+    def apply(self, ev):
+        strings = map(lambda s: s.apply(ev), self.right)
+        tag = u''.join([s for s in strings if s is not None])
+
+        if self.operand == '+=':
+            ev.add_tags(tag)
+        elif self.operand == '-=':
+            ev.remove_tags(tag)
 
 
 class IfBlock(object):
@@ -482,3 +559,4 @@ class FilterBlock(object):
     @classmethod
     def from_tokens(cls, toks):
         return FilterBlock(toks[0], toks[1:])
+

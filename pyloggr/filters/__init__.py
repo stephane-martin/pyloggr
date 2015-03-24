@@ -12,7 +12,7 @@ __author__ = 'stef'
 from os.path import join
 from threading import Lock
 
-from .build_config import ConfigParser, FilterBlock, IfBlock, IfFilterBlock
+from .build_config import ConfigParser, FilterBlock, IfBlock, IfFilterBlock, Assignment, TagsAssignment
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
 from .addtag import AddTagEngine
@@ -77,6 +77,9 @@ class Filters(object):
                     map(apply_one_statement, statement.statements)
                 elif statement.else_statements:
                     map(apply_one_statement, statement.else_statements)
+
+            elif isinstance(statement, Assignment) or isinstance(statement, TagsAssignment):
+                statement.apply(ev)
 
             else:
                 raise RuntimeError("Unknown statement type")
