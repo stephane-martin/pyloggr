@@ -31,7 +31,7 @@ class GeoIPEngine(object):
             # MODE_MMAP: load the geoip database in memory
             self.reader = geoip2.database.Reader(self.fname, mode=geoip2.database.MODE_MMAP)
 
-    def locate(self, ip_address):
+    def locate(self, ip_address, prefix=''):
         if self.reader is None:
             logger.error("GeoIP database is not opened")
             return None
@@ -41,13 +41,13 @@ class GeoIPEngine(object):
             logger.info("GeoIP failed for: {}".format(ip_address))
             return None
         return {
-            'continent': city.continent.name,
-            'city': city.city.name,
-            'country': city.country.name,
-            'country_iso': city.country.iso_code,
-            'subdivision': city.subdivisions.most_specific.name,
-            'latitude': city.location.latitude,
-            'longitude': city.location.longitude
+            prefix + 'continent': city.continent.name,
+            prefix + 'city': city.city.name,
+            prefix + 'country': city.country.name,
+            prefix + 'country_iso': city.country.iso_code,
+            prefix + 'subdivision': city.subdivisions.most_specific.name,
+            prefix + 'latitude': city.location.latitude,
+            prefix + 'longitude': city.location.longitude
         }
 
     def close(self):
@@ -63,23 +63,24 @@ class GeoIPEngine(object):
     def __exit__(self, ext_type, exc_value, traceback):
         self.close()
 
-    def apply(self, ev, arguments):
+    def apply(self, ev, args, kw):
         """
         :type ev: Event
         """
         target_ip = None
-        if isinstance(arguments, text):
-            target_ip = arguments
-        elif isinstance(arguments, list):
-            if len(arguments) > 0:
-                target_ip = arguments[0]
+        if isinstance(args, text):
+            target_ip = args
+        elif isinstance(args, list):
+            if len(args) > 0:
+                target_ip = args[0]
             else:
                 logger.error("GeoIP apply: empty list arguments")
         else:
             logger.error("GeoIP apply: unknown arguments type")
         if target_ip:
-            new_fields = self.locate(target_ip)
+            prefix = kw.get('prefix', '')
+            new_fields = self.locate(target_ip, prefix)
             if new_fields:
-                ev.update(self.locate(target_ip))
+                ev.update(new_fields)
                 return True
         return False

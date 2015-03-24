@@ -6,6 +6,10 @@ Pyparsing stuff to parse `filters.conf`
 
 __author__ = 'stef'
 
+
+# todo: filters like grok and useragent should support a 'prefix' argument
+
+import logging
 import re
 
 from pyparsing import Word, Keyword, Literal, Suppress, quotedString, pythonStyleComment, alphas, alphanums, Forward
@@ -299,6 +303,7 @@ class ConfigParser(object):
 
         equals          = Literal('==')
         assign          = Suppress(Literal(':='))
+        kw_arg_assign   = Suppress(Literal('='))
         tags_assign     = Literal('+=') | Literal('-=')
         different       = Literal('!=')
         in_op           = Keyword('in')
@@ -378,13 +383,16 @@ class ConfigParser(object):
         )
         condition = condition.setResultsName('condition')
 
-        filter_argument = my_qs | plain_field | extended_field
-        filter_arguments = Optional(delimitedList(filter_argument)).setResultsName('arguments')
-        filter_statement = (filter_name + Optional(open_par + filter_arguments + close_par)).setParseAction(
-            make_filter
+        built_string = Group(delimitedList(expr=(plain_field | extended_field | my_qs), delim='+')).setParseAction(
+            make_built_string
         )
 
-        built_string = Group(delimitedList(expr=(plain_field | extended_field | my_qs), delim='+'))
+        filter_kw_argument = Group(label + kw_arg_assign + built_string).setParseAction(make_kw_argument)
+        filter_argument = built_string | filter_kw_argument
+        filter_arguments = Optional(delimitedList(filter_argument))
+        filter_statement = (filter_name + open_par + filter_arguments + close_par).setParseAction(
+            make_filter
+        )
 
         assignment = Group(extended_field + assign + built_string).setParseAction(
             make_assignment
@@ -394,10 +402,9 @@ class ConfigParser(object):
             make_tags_assignment
         )
 
-
-
         if_block = Forward()
         if_filter_block = Forward()
+
         general_block = Suppress(comment_line) | filter_statement | if_block | if_filter_block | assignment | \
             tags_assignment
 
@@ -407,12 +414,14 @@ class ConfigParser(object):
             open_acc + Group(OneOrMore(general_block)) + close_acc +
             Optional(else_cond + open_acc + Group(OneOrMore(general_block)) + close_acc)
         )
+
         if_filter_block << Group(
             if_cond +
             filter_statement +
             open_acc + Group(OneOrMore(general_block)) + close_acc +
             Optional(else_cond + open_acc + Group(OneOrMore(general_block)) + close_acc)
         )
+
         if_block.setParseAction(make_if_block)
         if_filter_block.setParseAction(make_if_filter_block)
 
@@ -422,6 +431,7 @@ class ConfigParser(object):
         try:
             return self._parser.parseString(s, parseAll=True)
         except ParseException as ex:
+            logging.exception(ex)
             raise_from(ValueError("Syntax Error in filters configuration"), ex)
 
     def parse_config_file(self, filter_config_filename):
@@ -431,6 +441,9 @@ class ConfigParser(object):
         res = self.parse_string(s)
         return res
 
+
+def make_built_string(toks):
+    return BuiltString.from_tokens(toks[0])
 
 def make_if_block(toks):
     return IfBlock.from_tokens(toks[0])
@@ -445,14 +458,12 @@ def make_tags_assignment(toks):
     return TagsAssignment.from_tokens(toks[0])
 
 
-class Assignment(object):
-    def __init__(self, left, right):
-        self.left = left
-        self.right = right
-        print "****", right
+class BuiltString(object):
+    def __init__(self, part_strings):
+        self.part_strings = part_strings
 
     def str(self):
-        return '`{} := {}`'.format(self.left, self.right)
+        return "String({})".format('+'.join(str(part) for part in self.part_strings))
 
     def __str__(self):
         return self.str()
@@ -461,8 +472,31 @@ class Assignment(object):
         return self.str()
 
     def apply(self, ev):
-        strings = map(lambda s: s.apply(ev), self.right)
-        ev[self.left.name] = u''.join([s for s in strings if s is not None])
+        strings = map(lambda s: s.apply(ev), self.part_strings)
+        strings = filter(lambda s: s is not None, strings)
+        return ''.join(strings)
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return BuiltString(toks)
+
+
+class Assignment(object):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def str(self):
+        return '`{} := {}`'
+
+    def __str__(self):
+        return self.str()
+
+    def __repr__(self):
+        return self.str()
+
+    def apply(self, ev):
+        ev[self.left.name] = self.right.apply(ev)
 
     @classmethod
     def from_tokens(cls, toks):
@@ -470,12 +504,13 @@ class Assignment(object):
 
 
 class TagsAssignment(object):
+    typ = "Assignment"
     def __init__(self, operand, right):
         self.operand = operand
         self.right = right
 
     def str(self):
-        return '`tags mod: {} {}`'.format(self.operand, self.right)
+        return '`tags mod: {} {}`'
 
     def __str__(self):
         return self.str()
@@ -488,8 +523,7 @@ class TagsAssignment(object):
         return TagsAssignment(toks[0], toks[1])
 
     def apply(self, ev):
-        strings = map(lambda s: s.apply(ev), self.right)
-        tag = u''.join([s for s in strings if s is not None])
+        tag = self.right.apply(ev)
 
         if self.operand == '+=':
             ev.add_tags(tag)
@@ -545,7 +579,8 @@ class IfFilterBlock(object):
 class FilterBlock(object):
     def __init__(self, filter_name, filter_arguments=None):
         self.filter_name = filter_name.strip('" ')
-        self.filter_arguments = filter_arguments
+        self.filter_arguments = filter(lambda arg: not isinstance(arg, tuple), filter_arguments)
+        self.filter_kw_arguments = dict(filter(lambda arg: isinstance(arg, tuple), filter_arguments))
         self.typ = "Filter"
 
     def __str__(self):
@@ -558,3 +593,6 @@ class FilterBlock(object):
     def from_tokens(cls, toks):
         return FilterBlock(toks[0], toks[1:])
 
+
+def make_kw_argument(toks):
+    return toks[0][0], toks[0][1]

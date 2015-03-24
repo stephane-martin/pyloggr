@@ -20,7 +20,7 @@ class DropEngine(object):
     def close(self):
         pass
 
-    def apply(self, ev, arguments):
+    def apply(self, ev, args, kw):
         """
         :type ev: Event
         """

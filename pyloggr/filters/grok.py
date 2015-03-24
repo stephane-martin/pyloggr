@@ -156,15 +156,15 @@ class GrokEngine(object):
                 logger.warning("Grok: Unknown pattern: {}".format(pattern))
         return None, None
 
-    def apply(self, ev, arguments):
-        if not arguments:
+    def apply(self, ev, args, kw):
+        if not args:
             return
 
+        prefix = kw.get('prefix', '')
 
-
-        (pattern_name, new_fields) = self.search(ev.message, arguments)
+        (pattern_name, new_fields) = self.search(ev.message, args)
         if new_fields:
-            new_fields = {label: field for label, field in new_fields.items() if field is not None}
+            new_fields = {prefix + label: field for label, field in new_fields.items() if field is not None}
             ev.update(new_fields)
             ev['grok_pattern'] = pattern_name
             return True

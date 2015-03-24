@@ -20,15 +20,15 @@ class UserAgentEngine(object):
     def close(self):
         pass
 
-    def apply(self, ev, arguments):
+    def apply(self, ev, args, kw):
         """
         :type ev: pyloggr.event.Event
         """
-        if not arguments:
+        if not args:
             logger.debug("useragent filter needs at least one argument")
             return False
         res = False
-        for arg in arguments:
+        for arg in args:
             if not arg:
                 continue
             d = httpagentparser.detect(arg)

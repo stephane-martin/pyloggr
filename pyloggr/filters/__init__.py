@@ -53,12 +53,13 @@ class Filters(object):
 
         def apply_one_statement(statement):
             if isinstance(statement, FilterBlock):
-                calculated_arguments = map(lambda argument: argument.apply(ev), statement.filter_arguments)
+                calculated_args = map(lambda argument: argument.apply(ev), statement.filter_arguments)
+                calculated_kw_args = {k: v.apply(ev) for (k, v) in statement.filter_kw_arguments.items()}
                 if self._filters[statement.filter_name].thread_safe:
-                    return_value = self._filters[statement.filter_name].apply(ev, calculated_arguments)
+                    return_value = self._filters[statement.filter_name].apply(ev, calculated_args, calculated_kw_args)
                 else:
                     with self.filters_locks[statement.filter_name]:
-                        return_value = self._filters[statement.filter_name].apply(ev, calculated_arguments)
+                        return_value = self._filters[statement.filter_name].apply(ev, calculated_args, calculated_kw_args)
                 return return_value
 
             elif isinstance(statement, IfBlock):
