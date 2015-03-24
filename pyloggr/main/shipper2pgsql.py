@@ -133,16 +133,17 @@ class PostgresqlShipper(object):
             yield self.launch()
             return
 
-        def flush_backthread(messages, tablename):
+        def flush_backthread(rabbit_messages, tablename):
             events = list()
-            for message in messages:
+            for rabbit_message in rabbit_messages:
                 try:
-                    ev = Event.load(message.body)
-                    ev.verify_hmac()
+                    ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True)
                 except ParsingError:
+                    # should not happen, messages are coming from pyloggr
                     logger.info("Dropping one message after parsing error")
                 except InvalidSignature:
                     logger.critical("Dropping one tampered event")
+                    logger.critical(rabbit_message.body)
                 else:
                     events.append(ev)
 

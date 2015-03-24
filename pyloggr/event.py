@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives import hmac as hmac_func
 from cryptography.exceptions import InvalidSignature
 from dateutil.tz import tzutc
 from psycopg2.extras import Json
-
+from spooky_hash import Hash128
 from .utils.fix_unicode import to_unicode
 from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
 from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
@@ -250,7 +250,7 @@ class Event(object):
         if len(self.uuid) > 0:
             logger.debug("Event already has an UUID: {}".format(self.uuid))
             return
-        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest = Hash128()
         digest.update(self.severity.encode("utf-8"))
         digest.update(self.facility.encode("utf-8"))
         digest.update(self.app_name.encode("utf-8"))
@@ -258,7 +258,7 @@ class Event(object):
         digest.update(self.message.encode("utf-8"))
         if self.timereported is not None:
             digest.update(str(self.timereported))
-        self.uuid = b64encode(digest.finalize())
+        self.uuid = b64encode(digest.digest())
         logger.debug("New UUID: {}".format(self.uuid))
         return self.uuid
 
@@ -308,6 +308,7 @@ class Event(object):
 
         :return: a base 64 encoded HMAC
         :rtype: str
+        :raise InvalidSignature: if HMAC already exists but is invalid
         """
         if self.hmac:
             logger.warning("Event already has a HMAC")
@@ -578,7 +579,7 @@ class Event(object):
         :param s: string (JSON or RFC 5424 or RFC 3164) or dictionnary
         :return: The parsed event
         :rtype: Event
-        :raise `ParsingError`: if deserialization failed
+        :raise `ParsingError`: if deserialization fails
         """
         if isinstance(s, dict):
             return cls._load_dictionnary(s)
@@ -595,18 +596,21 @@ class Event(object):
             raise ValueError(u"s must be a dict or a basestring")
 
     @classmethod
-    def parse_bytes_to_event(cls, bytes_ev):
+    def parse_bytes_to_event(cls, bytes_ev, hmac=False):
         """
         Parse some bytes into an :py:class:`pyloggr.event.Event` object
 
         Note
         ====
-        We generate a HMAC for this new event
+        We generate a HMAC for this new event. If the event already has a HMAC, we verify it
 
         :param bytes_ev: the event as bytes
         :type bytes_ev: bytes
+        :param hmac: generate/verify a HMAC
+        :type hmac: bool
         :return: Event object
         :raise ParsingError: if bytes could not be parsed correctly
+        :raise InvalidSignature: if `hmac` is True and a HMAC already exists, but is invalid
         """
         try:
             event = cls.load(bytes_ev)
@@ -614,9 +618,9 @@ class Event(object):
             logger.warning(u"Could not unmarshall a syslog event")
             logger.debug(to_unicode(bytes_ev))
             raise
-        else:
+        if hmac:
             event.generate_hmac()
-            return event
+        return event
 
     @classmethod
     def _load_json(cls, json_encoded):

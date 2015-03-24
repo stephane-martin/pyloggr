@@ -174,7 +174,8 @@ class SyslogClientConnection(object):
         if len(bytes_event) > 0:
             logger.info("Got an event from TCP client {}:{}".format(self.client_host, self.client_port))
             try:
-                event = Event.parse_bytes_to_event(bytes_event)
+                # we don't calculate a HMAC yet, to preserve performance
+                event = Event.parse_bytes_to_event(bytes_event, hmac=False)
             except ParsingError as ex:
                 if ex.json:
                     logger.warning("JSON decoding failed. We log the event, drop it and continue")
@@ -220,7 +221,8 @@ class SyslogClientConnection(object):
         if len(bytes_event) > 0:
             logger.info("Got an event from RELP client {}:{}".format(self.client_host, self.client_port))
             try:
-                event = Event.parse_bytes_to_event(bytes_event)
+                # we don't calculate a HMAC yet, to preserve performance
+                event = Event.parse_bytes_to_event(bytes_event, hmac=False)
             except ParsingError as ex:
                 if ex.json:
                     logger.warning("JSON decoding failed. We send 500 to RELP client and continue")

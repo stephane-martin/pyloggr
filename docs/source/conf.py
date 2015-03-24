@@ -7,6 +7,7 @@ from mock import MagicMock
 
 os.environ['SPHINX_BUILD'] = "True"
 
+
 class Mock(MagicMock):
     @classmethod
     def __getattr__(cls, name):
@@ -17,7 +18,7 @@ class Mock(MagicMock):
 MOCK_MODULES = [
     'enum', 'pyev', 'pika', 'pika.adapters', 'pika.adapters.tornado_connection', 'cryptography',
     'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
-    'cryptography.exceptions', 'subprocess32'
+    'cryptography.exceptions', 'subprocess32', 'spooky_hash'
 ]
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 

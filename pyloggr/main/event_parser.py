@@ -111,8 +111,6 @@ class EventParser(object):
             yield self.publisher.stop()
             self.publisher = None
 
-
-
     @coroutine
     def shutdown(self):
         """
@@ -124,23 +122,22 @@ class EventParser(object):
 
     def apply_filters(self, message):
         try:
-            ev = Event.load(message.body)
+            ev = Event.parse_bytes_to_event(message.body, hmac=True)
         except ParsingError:
-            # should not happen, as syslog server sent the event before
-            logger.warning("Dropping one unparsable event")
+            # should not happen, as pyloggr's syslog server just sent the event
+            logger.error("Dropping one unparsable event")
+            logger.error(message)
             return message, None
-
-        try:
-            ev.verify_hmac()
         except InvalidSignature:
+            # should not happen, the event is not supposed to have a HMAC yet
             logger.critical("Dropping one tampered event")
-            # todo: put the event in some logfile
+            logger.critical(message)
             return message, None
 
         try:
             self.filters.apply(ev)
         except DropException:
-            logger.debug("DROP filter!")
+            logger.debug("DROP filter")
             return message, None
 
         return message, ev

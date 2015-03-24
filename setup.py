@@ -20,7 +20,7 @@ def list_subdir(subdirname):
             f.endswith('.txt'))
     ]) for root, dirs, files in os.walk(subdirname)]
     prefix_len = len(commonprefix(list(d[0] for d in l)))
-    l = [(root[prefix_len+1:], list_of_files) for root, list_of_files in l if list_of_files]
+    l = [(root[prefix_len + 1:], list_of_files) for root, list_of_files in l if list_of_files]
     return l
 
 
@@ -31,7 +31,7 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis',
+    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis', 'spooky_hash',
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh', 'momoko',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
