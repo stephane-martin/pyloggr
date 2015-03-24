@@ -26,7 +26,7 @@ from pyloggr.cache import cache
 
 logger = logging.getLogger(__name__)
 
-# todo: push unparsable messages to some special logfile
+
 
 
 class Clients(NotificationProducer):
@@ -179,6 +179,7 @@ class SyslogClientConnection(object):
                 if ex.json:
                     logger.warning("JSON decoding failed. We log the event, drop it and continue")
                     logger.warning(bytes_event)
+                    # todo: push unparsable messages to some special logfile
                     return
                 else:
                     raise
@@ -224,6 +225,7 @@ class SyslogClientConnection(object):
                 if ex.json:
                     logger.warning("JSON decoding failed. We send 500 to RELP client and continue")
                     logger.warning(bytes_event)
+                    # todo: push unparsable messages to some special logfile
                     self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
                     return
                 else:

@@ -204,7 +204,6 @@ class Publisher(object):
         Tornado coroutine
         """
         json_event = event.dumps()
-        logger.debug(json_event)
         # publish the event in RabbitMQ in JSON format
         result = yield self.publish(
             exchange=exchange,

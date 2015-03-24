@@ -1,8 +1,6 @@
 # encoding: utf-8
 __author__ = 'stef'
 
-from ..event import Event
-
 
 class AddTagEngine(object):
     thread_safe = True

@@ -88,7 +88,6 @@ class EventParser(object):
     def _publish(self, future):
         message, ev = future.result()
         if ev is None:
-            # todo: instead of dropping the offending event, log it somewhere
             message.ack()
             return
         res = yield self.publisher.publish(
@@ -123,11 +122,11 @@ class EventParser(object):
         yield self.stop()
         self.filters.close()
 
-
     def apply_filters(self, message):
         try:
             ev = Event.load(message.body)
         except ParsingError:
+            # should not happen, as syslog server sent the event before
             logger.warning("Dropping one unparsable event")
             return message, None
 
@@ -135,6 +134,7 @@ class EventParser(object):
             ev.verify_hmac()
         except InvalidSignature:
             logger.critical("Dropping one tampered event")
+            # todo: put the event in some logfile
             return message, None
 
         try:

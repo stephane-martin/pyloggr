@@ -68,11 +68,15 @@ class Filters(object):
             elif isinstance(statement, IfBlock):
                 if statement.condition.apply(ev):
                     map(apply_one_statement, statement.statements)
+                elif statement.else_statements:
+                    map(apply_one_statement, statement.else_statements)
 
             elif isinstance(statement, IfFilterBlock):
                 return_value = apply_one_statement(statement.filter)
                 if return_value:
                     map(apply_one_statement, statement.statements)
+                elif statement.else_statements:
+                    map(apply_one_statement, statement.else_statements)
 
             else:
                 raise RuntimeError("Unknown statement type")

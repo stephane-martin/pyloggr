@@ -14,8 +14,9 @@ from ast import literal_eval
 
 from future.utils import raise_from
 from future.builtins import str as text
-from ..event import Event
 from ..utils.fix_unicode import to_unicode
+
+# todo: permettre les affectations simples comme filtre
 
 
 class Constant(object):
@@ -57,7 +58,6 @@ class ExtendedField(Field):
         return "EField({})".format(self.name)
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         name = self.name.name if isinstance(self.name, Constant) else self.name
         return ev.fields_as_dict.get(name, None)
 
@@ -67,7 +67,6 @@ class PlainField(Field):
         return "PField({})".format(self.name)
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         return ev.__getattribute__(self.name)
 
 
@@ -113,7 +112,6 @@ class AndCondition(Condition):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         return self.left.apply(ev) and self.right.apply(ev)
 
 
@@ -130,7 +128,6 @@ class OrCondition(Condition):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         return self.left.apply(ev) or self.right.apply(ev)
 
 
@@ -166,7 +163,6 @@ class Equals(Predicate):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         return self.left.apply(ev) == self.right.apply(ev)
 
 
@@ -212,7 +208,6 @@ class Different(Predicate):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         return self.left.apply(ev) != self.right.apply(ev)
 
 
@@ -228,7 +223,6 @@ class In(Predicate):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         left = self.left if isinstance(self.left, text) else self.left.apply(ev)
         if self.right == "tags":
             return left in ev.tags
@@ -250,7 +244,6 @@ class Notin(Predicate):
         return self.__str__()
 
     def apply(self, ev):
-        assert(isinstance(ev, Event))
         left = self.left if isinstance(self.left, text) else self.left.apply(ev)
         if self.right == "tags":
             return left not in ev.tags
@@ -258,9 +251,6 @@ class Notin(Predicate):
             return left not in ev.fields_as_dict
         else:
             raise ValueError
-
-
-
 
 
 def make_condition(toks):
@@ -295,6 +285,7 @@ class ConfigParser(object):
         tags            = Keyword("tags")
 
         if_cond         = Suppress(Keyword("if"))
+        else_cond       = Suppress(Keyword("else"))
 
         geoip           = Keyword("geoip")
         grok            = Keyword("grok")
@@ -390,11 +381,21 @@ class ConfigParser(object):
         filter_arguments = Optional(delimitedList(filter_argument)).setResultsName('arguments')
         filter_statement = (filter_name + Optional(open_par + filter_arguments + close_par)).setParseAction(make_filter)
 
-        if_filter_block = Forward()
         if_block = Forward()
-        general_block = Suppress(comment_line) | filter_statement | if_block |if_filter_block
-        if_block << Group(if_cond + condition + open_acc + Group(OneOrMore(general_block)) + close_acc)
-        if_filter_block << Group(if_cond + filter_statement + open_acc + Group(OneOrMore(general_block)) + close_acc)
+        if_filter_block = Forward()
+        general_block = Suppress(comment_line) | filter_statement | if_block | if_filter_block
+        if_block << Group(
+            if_cond +
+            condition +
+            open_acc + Group(OneOrMore(general_block)) + close_acc +
+            Optional(else_cond + open_acc + Group(OneOrMore(general_block)) + close_acc)
+        )
+        if_filter_block << Group(
+            if_cond +
+            filter_statement +
+            open_acc + Group(OneOrMore(general_block)) + close_acc +
+            Optional(else_cond + open_acc + Group(OneOrMore(general_block)) + close_acc)
+        )
         if_block.setParseAction(make_if_block)
         if_filter_block.setParseAction(make_if_filter_block)
 
@@ -422,43 +423,48 @@ def make_if_filter_block(toks):
 
 
 class IfBlock(object):
-    def __init__(self, condition, statements):
+    def __init__(self, condition, statements, else_statements=None):
         self.condition = condition
         self.statements = statements
         self.typ = "If block"
+        self.else_statements = else_statements if else_statements else list()
 
     def __str__(self):
-        return "IfBlock {} ({})".format(self.condition, ','.join([statement.typ for statement in self.statements]))
+        return "IfBlock {} ({}) else ({})".format(
+            self.condition,
+            ','.join([statement.typ for statement in self.statements]),
+            ','.join([statement.typ for statement in self.else_statements])
+        )
 
     def __repr__(self):
         return self.__str__()
 
     @classmethod
     def from_tokens(cls, toks):
-        return IfBlock(toks[0], toks[1])
+        return IfBlock(toks[0], toks[1], toks[2]) if len(toks) == 3 else IfBlock(toks[0], toks[1])
 
 
 class IfFilterBlock(object):
-    def __init__(self, filtr, statements):
+    def __init__(self, filtr, statements, else_statements=None):
         self.filter = filtr
         self.statements = statements
+        self.else_statements = else_statements if else_statements else list()
         self.typ = "IfFilter block"
 
     def __str__(self):
         return "IfFilter {} ({}) ({})".format(
             self.filter.filter_name,
             ','.join([str(arg) for arg in self.filter.filter_arguments]),
-            ','.join([statement.typ for statement in self.statements]))
+            ','.join([statement.typ for statement in self.statements]),
+            ','.join([statement.typ for statement in self.else_statements])
+        )
 
     def __repr__(self):
         return self.__str__()
 
     @classmethod
     def from_tokens(cls, toks):
-        return IfFilterBlock(
-            statements=toks[1],
-            filtr=toks[0]
-        )
+        return IfFilterBlock(toks[0], toks[1], toks[2]) if len(toks) == 3 else IfFilterBlock(toks[0], toks[1])
 
 
 class FilterBlock(object):

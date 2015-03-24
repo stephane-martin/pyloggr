@@ -8,7 +8,7 @@ import geoip2.database
 from geoip2.errors import AddressNotFoundError
 from future.builtins import str as text
 
-from ..event import Event
+#from ..event import Event
 
 
 RELATIVE_GEOLITE_FILENAME = 'GeoLite2-City.mmdb'

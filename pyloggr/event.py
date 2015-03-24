@@ -34,6 +34,7 @@ from .config import HMAC_KEY
 logger = logging.getLogger(__name__)
 hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
 
+
 class ParsingError(ValueError):
     """
     Triggered when a string can't be parsed into an `Event`
@@ -507,7 +508,6 @@ class Event(object):
         :param s: string event
         :return: Event
         """
-        # todo: structured data can be present
         match_obj = REGEXP_SYSLOG23.match(s)
         if match_obj is None:
             raise ParsingError("Event is not a SYSLOG23 string")
@@ -533,7 +533,8 @@ class Event(object):
         ev = cls._load_dictionnary(event_dict)
 
         if flds['STRUCTUREDDATA'] != '-':
-            ev.add_tags('rfc5424 structured data')
+            # todo: parse and store the structured data in the event
+            ev.add_tags('rfc5424_structured_data')
             logger.debug(flds['STRUCTUREDDATA'])
         return ev
 
