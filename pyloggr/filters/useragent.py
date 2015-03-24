@@ -28,6 +28,7 @@ class UserAgentEngine(object):
             logger.debug("useragent filter needs at least one argument")
             return False
         res = False
+        prefix = kw.get('prefix', '')
         for arg in args:
             if not arg:
                 continue
@@ -36,19 +37,19 @@ class UserAgentEngine(object):
                 name = d['browser'].get('name', None)
                 version = d['browser'].get('version', None)
                 if name:
-                    ev['ua.browser'] = name
+                    ev[prefix + 'browser'] = name
                     res = True
                 if version:
-                    ev['ua.browser.version'] = version
+                    ev[prefix + 'browser_version'] = version
                     res = True
             if d.get('platform', None):
                 op_sys = d['platform'].get('name', None)
                 version = d['platform'].get('version', None)
                 if op_sys:
-                    ev['ua.os'] = op_sys
+                    ev[prefix + 'browser_os'] = op_sys
                     res = True
                 if version:
-                    ev['ua.os.version'] = version
+                    ev[prefix + 'browser_os_version'] = version
                     res = True
             if d.get('bot'):
                 ev.add_tags('bot')

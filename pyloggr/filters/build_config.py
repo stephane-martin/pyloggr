@@ -7,8 +7,6 @@ Pyparsing stuff to parse `filters.conf`
 __author__ = 'stef'
 
 
-# todo: filters like grok and useragent should support a 'prefix' argument
-
 import logging
 import re
 
