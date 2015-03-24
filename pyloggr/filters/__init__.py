@@ -15,8 +15,6 @@ from threading import Lock
 from .build_config import ConfigParser, FilterBlock, IfBlock, IfFilterBlock, Assignment, TagsAssignment
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
-from .addtag import AddTagEngine
-from .removetag import RemoveTagEngine
 from .drop import DropException, DropEngine
 from .useragent import UserAgentEngine
 
@@ -25,8 +23,6 @@ class Filters(object):
     filters_modules = {
         'grok': GrokEngine,
         'geoip': GeoIPEngine,
-        'addtag': AddTagEngine,
-        'removetag': RemoveTagEngine,
         'drop': DropEngine,
         'useragent': UserAgentEngine
     }
