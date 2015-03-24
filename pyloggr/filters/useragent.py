@@ -20,7 +20,8 @@ class UserAgentEngine(object):
     def close(self):
         pass
 
-    def apply(self, ev, args, kw):
+    @classmethod
+    def apply(cls, ev, args, kw):
         """
         :type ev: pyloggr.event.Event
         """
