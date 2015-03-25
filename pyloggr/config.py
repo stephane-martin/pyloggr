@@ -9,7 +9,7 @@ import os
 import logging
 import logging.config
 import sys
-from os.path import join
+from os.path import dirname, exists, abspath, join, expanduser
 import ssl
 from base64 import b64decode
 
@@ -175,6 +175,30 @@ class SSLConfig(object):
         self.ca_certs = ca_certs
         self.cert_reqs = cert_reqs
 
+class LoggingSchema(Schema):
+    class Meta:
+        strict = True
+
+    security = fields.String(default=u"~/logs/pyloggr.security.log")
+    syslog = fields.String(default=u"~/logs/pyloggr.syslog.log")
+    parser = fields.String(default=u"~/logs/pyloggr.parser.log")
+    frontend = fields.String(default=u"~/logs/pyloggr.frontend.log")
+    pgsql_shipper = fields.String(default=u"~/logs/pyloggr.pgsql_shipper.log")
+    level = fields.String(default=u"INFO")
+
+    def make_object(self, data):
+        return LoggingConfig(**data)
+
+
+class LoggingConfig(object):
+    def __init__(self, security, syslog, parser, frontend, pgsql_shipper, level):
+        self.security = security
+        self.syslog = syslog
+        self.parser = parser
+        self.frontend = frontend
+        self.pgsql_shipper = pgsql_shipper
+        self.level = level
+
 
 class SyslogSchema(Schema):
     class Meta:
@@ -195,8 +219,7 @@ class SyslogSchema(Schema):
 class SyslogConfig(object):
     schema = SyslogSchema()
 
-    def __init__(self, localhost_only,
-                 relp_port, relpssl_port, tcp_port, tcpssl_port, unix_socket, SSL=None):
+    def __init__(self, localhost_only, relp_port, relpssl_port, tcp_port, tcpssl_port, unix_socket, SSL=None):
         self.localhost_only = localhost_only
         self.unix_socket = unix_socket
         self.SSL = SSL
@@ -210,7 +233,6 @@ class ConfigSchema(Schema):
     class Meta:
         strict = True
 
-    LOGGING_LEVEL = fields.String(default=u'INFO')
     MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = fields.Integer(default=10)
     SLEEP_TIME = fields.Integer(default=60)
     HMAC_KEY = fields.String(required=True)
@@ -224,23 +246,25 @@ class ConfigSchema(Schema):
     SYSLOG_PUBLISHER = fields.Nested(PublisherSchema)
     REDIS = fields.Nested(RedisSchema)
     SYSLOG = fields.Nested(SyslogSchema)
+    LOGGING_FILES = fields.Nested(LoggingSchema)
 
     def make_object(self, data):
         return Config(**data)
 
-slots = ['LOGGING_LEVEL', 'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
-        'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-        'RABBITMQ_HTTP', 'POSTGRESQL']
+slots = [
+    'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
+    'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
+    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES'
+]
 
 class Config(object):
     schema = ConfigSchema()
     __slots__ = slots
 
-    def __init__(self, LOGGING_LEVEL, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, SLEEP_TIME,
+    def __init__(self, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, SLEEP_TIME,
                  NOTIFICATIONS, PARSER_CONSUMER, PARSER_PUBLISHER, PGSQL_CONSUMER, SYSLOG_PUBLISHER,
-                 REDIS, SYSLOG, HMAC_KEY, RABBITMQ_HTTP, POSTGRESQL):
+                 REDIS, SYSLOG, HMAC_KEY, RABBITMQ_HTTP, POSTGRESQL, LOGGING_FILES):
 
-        self.LOGGING_LEVEL = LOGGING_LEVEL
         self.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
         self.SLEEP_TIME = SLEEP_TIME
         self.NOTIFICATIONS = NOTIFICATIONS
@@ -253,13 +277,15 @@ class Config(object):
         self.HMAC_KEY = b64decode(HMAC_KEY)
         self.RABBITMQ_HTTP = RABBITMQ_HTTP
         self.POSTGRESQL = POSTGRESQL
+        self.LOGGING_FILES = LOGGING_FILES
+
 
     @classmethod
     def load(cls, d):
         return cls.schema.load(d).data
 
     @classmethod
-    def load_from_directory(cls, directory):
+    def load_config_from_directory(cls, directory):
         """
         :rtype: Config
         """
@@ -281,61 +307,84 @@ class Config(object):
 
 
 def set_logging(filename):
-    LOGGING_CONFIG['handlers']['tofile']['filename'] = filename
-    logging.config.dictConfig(LOGGING_CONFIG)
+    logging_config_dict = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'fileformat': {
+                'format': '%(asctime)s --- %(name)s --- %(process)d --- %(levelname)s --- %(message)s'
+            },
+            'consoleformat': {
+                'format': '%(levelname)s --- %(message)s'
+            }
+        },
+        'handlers': {
+            'console': {
+                'level': 'DEBUG',
+                'class': 'logging.StreamHandler',
+                'formatter': 'consoleformat'
+            },
+            'tofile': {
+                'level': 'DEBUG',
+                'class': 'logging.FileHandler',
+                'formatter': 'fileformat',
+                'filename': '',
+                'encoding': 'utf-8'
+            },
+            'security_handler': {
+                'level': 'DEBUG',
+                'class': 'logging.FileHandler',
+                'formatter': 'fileformat',
+                'filename': '',
+                'encoding': 'utf-8'
+            }
+
+        },
+        'loggers': {
+            '': {
+                'handlers': ['console', 'tofile'],
+                'level': "INFO"
+            },
+            'pyloggr': {
+                'handlers': ['console', 'tofile'],
+                'level': LOGGING_FILES.level,
+                'propagate': False
+            },
+            'security': {
+                'handlers': ['console', 'security_handler'],
+                'level': 'INFO',
+                'propagate': False
+            }
+
+        }
+
+    }
+
+    filename = abspath(expanduser(filename))
+    security_filename = abspath(expanduser(LOGGING_FILES.security))
+    if not exists(dirname(filename)):
+        os.makedirs(dirname(filename))
+    if not exists(dirname(security_filename)):
+        os.makedirs(dirname(security_filename))
+
+    logging_config_dict['handlers']['tofile']['filename'] = filename
+    logging_config_dict['handlers']['security_handler']['filename'] = security_filename
+
+    logging.config.dictConfig(logging_config_dict)
 
 
 CONFIG_DIR = os.environ.get('PYLOGGR_CONFIG_DIR')
 thismodule = sys.modules[__name__]
 if os.environ.get('SPHINX_BUILD'):
+    # mock the config object when we are just building sphinx documentation
     for attr in slots:
         setattr(thismodule, attr, 'Mock')
 else:
-    config = Config.load_from_directory(CONFIG_DIR)
+    # inject the config_obj attributes in this module, so that other modules can do things like
+    # from config import PARAMETER
+    config_obj = Config.load_config_from_directory(CONFIG_DIR)
     for attr in slots:
-        setattr(thismodule, attr, getattr(config, attr))
-
-LOGGING_CONFIG = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'fileformat': {
-            'format': '%(asctime)s --- %(name)s --- %(process)d --- %(levelname)s --- %(message)s'
-        },
-        'consoleformat': {
-            'format': '%(levelname)s --- %(message)s'
-        }
-    },
-    'handlers': {
-        'console': {
-            'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
-            'formatter': 'consoleformat'
-        },
-        'tofile': {
-            'level': 'DEBUG',
-            'class': 'logging.FileHandler',
-            'formatter': 'fileformat',
-            'filename': '/tmp/pylogger.log',
-            'encoding': 'utf-8'
-        }
-
-    },
-    'loggers': {
-        '': {
-            'handlers': ['console', 'tofile'],
-            'level': "INFO"
-        },
-        'pyloggr': {
-            'handlers': ['console', 'tofile'],
-            'level': LOGGING_LEVEL,
-            'propagate': False
-        }
-
-
-    }
-
-}
+        setattr(thismodule, attr, getattr(config_obj, attr))
 
 
 

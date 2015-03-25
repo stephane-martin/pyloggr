@@ -16,13 +16,12 @@ from tornado.ioloop import IOLoop
 from tornado.process import fork_processes
 from tornado.gen import coroutine
 
-from pyloggr.config import LOGGING_CONFIG, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
 from pyloggr.cache import cache, CacheError
 
 
 class PyloggrProcess(object):
-    def __init__(self, name, logging_file, fork=True):
-        self.logging_file = logging_file
+    def __init__(self, name, fork=True):
         self.name = name
         self.logger = None
         self.fork = fork

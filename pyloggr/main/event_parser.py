@@ -70,6 +70,8 @@ class EventParser(object):
         except RabbitMQConnectionError:
             logger.warning("Can't connect to consumer")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
+            # self.stop() stops the publisher too. so closed_publisher_event.wait() inside launch will return,
+            # and call_later will be called
             yield self.stop()
             return
         yield self._consume()
@@ -81,7 +83,7 @@ class EventParser(object):
             if (not self.consumer) or self.shutting_down:
                 break
             message = yield message_queue.get()
-            future = self.executor.submit(self.apply_filters, message)
+            future = self.executor.submit(self._apply_filters, message)
             IOLoop.instance().add_future(future, self._publish)
 
     @coroutine
@@ -120,9 +122,21 @@ class EventParser(object):
         yield self.stop()
         self.filters.close()
 
-    def apply_filters(self, message):
+    def _apply_filters(self, message):
+        """
+        Apply filters to the event inside the RabbitMQ message.
+
+        Note
+        ====
+        This method is executed in a separated thread.
+
+        :param message: event to apply filters to, as a RabbitMQ message
+        :type message: pyloggr.consumer.RabbitMQMessage
+        :return: tuple(message, parsed event). parsed event is None when event couldn't be parsed.
+        :rtype: tuple(pyloggr.consumer.RabbitMQMessage, pyloggr.event.Event)
+        """
         try:
-            ev = Event.parse_bytes_to_event(message.body, hmac=True)
+            ev = Event.parse_bytes_to_event(message.body, hmac=True, json=True)
         except ParsingError:
             # should not happen, as pyloggr's syslog server just sent the event
             logger.error("Dropping one unparsable event")

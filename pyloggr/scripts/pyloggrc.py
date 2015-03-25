@@ -9,53 +9,58 @@ __author__ = 'stef'
 import os
 import sys
 from os.path import exists, expanduser
-import logging
 
 from argh.helpers import ArghParser
 
 
-def check_config_dir():
-    config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
-    if not exists(config_env):
-        raise RuntimeError("Config directory '{}' doesn't exists".format(config_env))
+def set_config_env(config_dir):
+    """
+    Set up configuration
 
-
-def set_config(config_dir, filename):
+    :param config_dir: configuration directory
+    :type config_dir: str
+    :raise RuntimeError: when configuration failed
+    """
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not config_env:
         if config_dir:
             os.environ['PYLOGGR_CONFIG_DIR'] = config_dir
         else:
             os.environ['PYLOGGR_CONFIG_DIR'] = expanduser('~/.pyloggr')
-    check_config_dir()
-    from pyloggr.config import set_logging
-    set_logging(filename)
+
+    config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
+    if not exists(config_env):
+        raise RuntimeError("Config directory '{}' doesn't exists".format(config_env))
 
 
 def parser(config_dir=None):
-    set_config(config_dir, "/tmp/pyloggr_parser.log")
-    logging.debug("im the parser")
+    set_config_env(config_dir)
+    from pyloggr.config import set_logging, LOGGING_FILES
+    set_logging(LOGGING_FILES.parser)
     from pyloggr.scripts.processes import ParserProcess
     ParserProcess().main()
 
 
 def syslog(config_dir=None):
-    set_config(config_dir, "/tmp/pyloggr_syslog_server.log")
-    logging.debug("im the syslog server")
+    set_config_env(config_dir)
+    from pyloggr.config import set_logging, LOGGING_FILES
+    set_logging(LOGGING_FILES.syslog)
     from pyloggr.scripts.processes import SyslogProcess
     SyslogProcess().main()
 
 
 def pgsql_shipper(config_dir=None):
-    set_config(config_dir, "/tmp/pyloggr_pgsql_shipper.log")
-    logging.debug("im the pgsql shipper")
+    set_config_env(config_dir)
+    from pyloggr.config import set_logging, LOGGING_FILES
+    set_logging(LOGGING_FILES.pgsql_shipper)
     from pyloggr.scripts.processes import PgSQLShipperProcess
     PgSQLShipperProcess().main()
 
 
 def frontend(config_dir=None):
-    set_config(config_dir, "/tmp/pyloggr_frontend.log")
-    logging.debug("im the frontend")
+    set_config_env(config_dir)
+    from pyloggr.config import set_logging, LOGGING_FILES
+    set_logging(LOGGING_FILES.frontend)
     from pyloggr.scripts.processes import FrontendProcess
     FrontendProcess().main()
 

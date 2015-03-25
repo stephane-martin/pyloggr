@@ -11,7 +11,6 @@ __author__ = 'stef'
 
 import logging
 from base64 import b64encode, b64decode
-from datetime import datetime
 import ujson
 from arrow import Arrow
 from marshmallow import Schema, fields
@@ -23,7 +22,6 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import hmac as hmac_func
 from cryptography.exceptions import InvalidSignature
-from dateutil.tz import tzutc
 from psycopg2.extras import Json
 from spooky_hash import Hash128
 from .utils.fix_unicode import to_unicode
@@ -251,13 +249,14 @@ class Event(object):
             logger.debug("Event already has an UUID: {}".format(self.uuid))
             return
         digest = Hash128()
+        # Hash128 doesn't accept unicode
         digest.update(self.severity.encode("utf-8"))
         digest.update(self.facility.encode("utf-8"))
         digest.update(self.app_name.encode("utf-8"))
         digest.update(self.source.encode("utf-8"))
         digest.update(self.message.encode("utf-8"))
         if self.timereported is not None:
-            digest.update(str(self.timereported))
+            digest.update(str(Arrow.fromdatetime(self.timereported)))
         self.uuid = b64encode(digest.digest())
         logger.debug("New UUID: {}".format(self.uuid))
         return self.uuid
@@ -267,10 +266,10 @@ class Event(object):
         If the event hasn't got a timegenerated field, give the current timestamp
         """
         if self.timegenerated is None:
-            self.timegenerated = datetime.now(tzutc())
+            self.timegenerated = Arrow.utcnow().datetime
 
     def __hash__(self):
-        return hash(self.uuid)
+        return self.uuid
 
     def __eq__(self, other):
         """
@@ -290,15 +289,15 @@ class Event(object):
 
     def _hmac(self):
         h = hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
+        # HMAC doesn't accept unicode
         h.update(self.severity.encode("utf-8"))
         h.update(self.facility.encode("utf-8"))
         h.update(self.app_name.encode("utf-8"))
         h.update(self.source.encode("utf-8"))
         h.update(self.message.encode("utf-8"))
         if self.timereported is not None:
-            # take care of changing timezones...
-            h.update(str(Arrow.fromdatetime(self.timereported).float_timestamp))
-
+            # take care of timezones...
+            h.update(str(Arrow.fromdatetime(self.timereported)))
         h.update(str(self.timehmac))
         return h
 
@@ -314,7 +313,7 @@ class Event(object):
             logger.warning("Event already has a HMAC")
             self.verify_hmac()
             return
-        self.timehmac = datetime.now(tzutc())
+        self.timehmac = Arrow.utcnow().datetime
         h = self._hmac()
         self.hmac = b64encode(h.finalize())
         return self.hmac
@@ -488,7 +487,7 @@ class Event(object):
         :param d: dictionnary
         :return: Event
         """
-        # workaround: marshmallow doesnt like None datetimes
+        # workaround: marshmallow doesn't like 'None' objects
         if d.get('timegenerated') is None:
             d.pop('timegenerated', None)
         if d.get('timereported') is None:
@@ -574,7 +573,8 @@ class Event(object):
     @classmethod
     def load(cls, s):
         """
-        Try to deserialize an Event from a string or a dictionnary
+        Try to deserialize an Event from a string or a dictionnary. `load` understands JSON events, RFC 5424 events
+        and RFC 3164 events, or dictionnary events. It automatically detects the type, using regexp tests.
 
         :param s: string (JSON or RFC 5424 or RFC 3164) or dictionnary
         :return: The parsed event
@@ -596,7 +596,7 @@ class Event(object):
             raise ValueError(u"s must be a dict or a basestring")
 
     @classmethod
-    def parse_bytes_to_event(cls, bytes_ev, hmac=False):
+    def parse_bytes_to_event(cls, bytes_ev, hmac=False, json=False):
         """
         Parse some bytes into an :py:class:`pyloggr.event.Event` object
 
@@ -608,17 +608,21 @@ class Event(object):
         :type bytes_ev: bytes
         :param hmac: generate/verify a HMAC
         :type hmac: bool
+        :param json: whether bytes_ev is a JSON string (if not sure, you can keep False)
+        :type json: bool
         :return: Event object
         :raise ParsingError: if bytes could not be parsed correctly
         :raise InvalidSignature: if `hmac` is True and a HMAC already exists, but is invalid
         """
         try:
-            event = cls.load(bytes_ev)
+            # optimization: if we're sure that the event is JSON, skip type detection tests
+            event = cls._load_json(bytes_ev) if json else cls.load(bytes_ev)
         except ParsingError:
             logger.warning(u"Could not unmarshall a syslog event")
             logger.debug(to_unicode(bytes_ev))
             raise
         if hmac:
+            # verify HMAC if the event has one, else generate a HMAC
             event.generate_hmac()
         return event
 

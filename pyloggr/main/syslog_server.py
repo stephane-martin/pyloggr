@@ -25,6 +25,7 @@ from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
 
 logger = logging.getLogger(__name__)
+security_logger = logging.getLogger('security')
 
 
 
@@ -180,7 +181,6 @@ class SyslogClientConnection(object):
                 if ex.json:
                     logger.warning("JSON decoding failed. We log the event, drop it and continue")
                     logger.warning(bytes_event)
-                    # todo: push unparsable messages to some special logfile
                     return
                 else:
                     raise
@@ -227,7 +227,6 @@ class SyslogClientConnection(object):
                 if ex.json:
                     logger.warning("JSON decoding failed. We send 500 to RELP client and continue")
                     logger.warning(bytes_event)
-                    # todo: push unparsable messages to some special logfile
                     self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
                     return
                 else:
@@ -275,7 +274,9 @@ class SyslogClientConnection(object):
         elif command == 'syslog':
             yield self._process_relp_event(data.strip(), relp_event_id)
         else:
-            logger.info("Unknown command '{}' from {}:{}".format(command, self.client_host, self.client_port))
+            log_msg = "Unknown command '{}' from {}:{}".format(command, self.client_host, self.client_port)
+            security_logger.warning(log_msg)
+            logger.warning(log_msg)
             self.stream.write('{} rsp 6 200 OK\n'.format(relp_event_id))
 
     @coroutine
@@ -322,7 +323,11 @@ class SyslogClientConnection(object):
                     try:
                         msg_len = int(first_token)
                     except ValueError:
-                        logger.warning(u"Syntax error from TCP client. We disconnect it.")
+                        log_msg = u"Syntax error from TCP client '{}:{}'. We disconnect it.".format(
+                            self.client_host, self.client_port
+                        )
+                        logger.warning(log_msg)
+                        security_logger.warning(log_msg)
                         self.disconnect()
                         break
                     syslog_msg = yield self.stream.read_bytes(msg_len)
@@ -330,7 +335,11 @@ class SyslogClientConnection(object):
                 try:
                     yield self._process_tcp_event(syslog_msg)
                 except ParsingError:
-                    logger.warning(u"TCP client sent a malformed event. We disconnect it.")
+                    log_msg = u"TCP client '{}:{}' sent a malformed event. We disconnect it.".format(
+                        self.client_host, self.client_port
+                    )
+                    logger.warning(log_msg)
+                    security_logger.warning(log_msg)
                     self.disconnect()
                     break
 
@@ -338,7 +347,8 @@ class SyslogClientConnection(object):
             logger.info(u"TCP stream was closed {}:{}".format(self.client_host, self.client_port))
             self.disconnect()
         except ssl.SSLError:
-            logger.exception("Something bad happened in the TLS conversation")
+            logger.warning("Something bad happened in the TLS conversation")
+            security_logger.exception("Something bad happened in the TLS conversation")
             self.disconnect()
 
     @coroutine
@@ -351,7 +361,7 @@ class SyslogClientConnection(object):
         ====
         Tornado coroutine
         """
-        # todo: perf optimisation
+        # todo: perf optimisation ?
         token = ''
         while True:
             token = yield self.stream.read_until(b' ')
@@ -394,8 +404,11 @@ class SyslogClientConnection(object):
                     relp_event_id = int(relp_event_id)
                 except ValueError:
                     # bad client, let's disconnect
-                    logger.warning("Relp ID ({}) was not an integer".format(relp_event_id))
-                    logger.warning("We disconnect the RELP client {}:{}".format(self.client_host, self.client_port))
+                    log_msg = "Relp ID ({}) was not an integer. We disconnect the RELP client {}:{}".format(
+                        relp_event_id, self.client_host, self.client_port
+                    )
+                    logger.warning(log_msg)
+                    security_logger.warning(log_msg)
                     self.disconnect()
                     break
                 command = yield self._read_next_token()
@@ -404,8 +417,11 @@ class SyslogClientConnection(object):
                     length = int(length)
                 except ValueError:
                     # bad client, let's disconnect
-                    logger.warning("Relp length ({}) was not an integer".format(length))
-                    logger.warning("We disconnect the RELP client {}:{}".format(self.client_host, self.client_port))
+                    log_msg = "Relp length ({}) was not an integer. We disconnect the RELP client {}:{}".format(
+                        length, self.client_host, self.client_port
+                    )
+                    logger.warning(log_msg)
+                    security_logger.warning(log_msg)
                     self.disconnect()
                     break
                 data = b''
@@ -415,7 +431,11 @@ class SyslogClientConnection(object):
                 try:
                     yield self._process_relp_command(relp_event_id, command, data)
                 except ParsingError:
-                    logger.warning(u"RELP client sent a malformed event. We disconnect it.")
+                    log_msg = u"RELP client '{}:{}' sent a malformed event. We disconnect it.".format(
+                        self.client_host, self.client_port
+                    )
+                    logger.warning(log_msg)
+                    security_logger.warning(log_msg)
                     self.disconnect()
                     break
 
@@ -475,7 +495,8 @@ class SyslogClientConnection(object):
         logger.info('New client is connected {}:{} to {}'.format(
             self.client_host, self.client_port, server_port
         ))
-        assert(callable(dispatch_function))
+
+        # noinspection PyCallingNonCallable
         yield dispatch_function()
 
     def disconnect(self):

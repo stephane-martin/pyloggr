@@ -17,7 +17,7 @@ from pyloggr.main.web_frontend import WebServer
 
 class SyslogProcess(PyloggrProcess):
     def __init__(self):
-        PyloggrProcess.__init__(self, name="syslog", logging_file="/tmp/pyloggr_syslog_server.log", fork=True)
+        PyloggrProcess.__init__(self, name="syslog", fork=True)
         from pyloggr.config import SYSLOG
         self.syslog_config = SyslogConfig(SYSLOG)
         self.syslog_config.bind_all_sockets()
@@ -36,7 +36,7 @@ class SyslogProcess(PyloggrProcess):
 
 class ParserProcess(PyloggrProcess):
     def __init__(self):
-        PyloggrProcess.__init__(self, name="parser", logging_file="/tmp/pyloggr_parser.log", fork=True)
+        PyloggrProcess.__init__(self, name="parser", fork=True)
 
     @coroutine
     def launch(self):
@@ -51,7 +51,7 @@ class ParserProcess(PyloggrProcess):
 
 class PgSQLShipperProcess(PyloggrProcess):
     def __init__(self):
-        PyloggrProcess.__init__(self, name="PGSQL shipper", logging_file="/tmp/pyloggr_pgsql_shipper.log", fork=True)
+        PyloggrProcess.__init__(self, name="PGSQL shipper", fork=True)
 
     @coroutine
     def launch(self):
@@ -63,7 +63,7 @@ class PgSQLShipperProcess(PyloggrProcess):
 
 class FrontendProcess(PyloggrProcess):
     def __init__(self):
-        PyloggrProcess.__init__(self, name="HTTP frontend", logging_file="/tmp/pyloggr_frontend.log", fork=False)
+        PyloggrProcess.__init__(self, name="HTTP frontend", fork=False)
 
     @coroutine
     def launch(self):

@@ -122,7 +122,7 @@ class PostgresqlShipper(object):
 
         logger.info("Flushing events to PGSQL")
         if self.db_pool is None:
-            logger.warning("We dont have a pool to PGSQL. Giving up flush. Stopping the consumer.")
+            logger.warning("We don't have a pool to PGSQL. Giving up flush. Stopping the consumer.")
             self.stop()
             yield sleep(60)
             yield self.launch()
@@ -137,13 +137,15 @@ class PostgresqlShipper(object):
             events = list()
             for rabbit_message in rabbit_messages:
                 try:
-                    ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True)
+                    ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True, json=True)
                 except ParsingError:
                     # should not happen, messages are coming from pyloggr
                     logger.info("Dropping one message after parsing error")
                 except InvalidSignature:
-                    logger.critical("Dropping one tampered event")
-                    logger.critical(rabbit_message.body)
+                    security_logger = logging.getLogger('security')
+                    logger.critical("Dropping one tampered event, see security logs")
+                    security_logger.critical("Dropping one tampered event")
+                    security_logger.critical(rabbit_message.body)
                 else:
                     events.append(ev)
 
