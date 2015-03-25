@@ -43,26 +43,6 @@ class ParsingError(ValueError):
         self.json = kwargs['json'] if 'json' in kwargs else False
 
 
-class CFieldSchema(Schema):
-    """
-    CFieldSchema()
-    Marshmallow schema for :py:class:`CField` class
-    """
-
-    class Meta:
-        strict = True
-        json_module = ujson
-        ordered = True
-
-    key = fields.String()
-    value = fields.String()
-
-    def make_object(self, data):
-        if data is None:
-            return None
-        return CField(**data)
-
-
 class EventSchema(Schema):
     """
     Marshmallow schema for the :py:class:`Event` class
@@ -73,27 +53,27 @@ class EventSchema(Schema):
         json_module = ujson
         ordered = True
 
-    procid = fields.String()
+    procid = fields.String(required=False, default="-")                # string because procid can be "-"
     severity = fields.String(required=True)
     facility = fields.String(required=True)
-    app_name = fields.String(required=False)
+    app_name = fields.String(required=False, default='')
     source = fields.String(required=True)
-    programname = fields.String(required=False)
-    syslogtag = fields.String(required=False)
+    programname = fields.String(required=False, default='')
+    syslogtag = fields.String(required=False, default='')
     message = fields.String(required=True)
-    iut = fields.Integer(required=False)
-    uuid = fields.String(required=False)
-    hmac = fields.String(required=False)
-    timereported = fields.DateTime(required=False)
-    timegenerated = fields.DateTime(required=False)
-    timehmac = fields.DateTime(required=False)
-    trusted_pid = fields.String(required=False)
-    trusted_uid = fields.String(required=False)
-    trusted_gid = fields.String(required=False)
-    trusted_comm = fields.String(required=False)
-    trusted_exe = fields.String(required=False)
-    trusted_cmdline = fields.String(required=False)
-    cfields = fields.Nested(CFieldSchema, allow_null=True, many=True, default=list())
+    iut = fields.Integer(required=False, default=1)
+    uuid = fields.String(required=False, default=None)
+    hmac = fields.String(required=False, default=None)
+    timereported = fields.DateTime(required=False, default=None)
+    timegenerated = fields.DateTime(required=False, default=None)
+    timehmac = fields.DateTime(required=False, default=None)
+    trusted_pid = fields.Integer(required=False, default=None)
+    trusted_uid = fields.Integer(required=False, default=None)
+    trusted_gid = fields.String(required=False, default=None)
+    trusted_comm = fields.String(required=False, default='')
+    trusted_exe = fields.String(required=False, default='')
+    trusted_cmdline = fields.String(required=False, default='')
+    custom_fields = fields.Field(required=False, default=dict())
     # noinspection PyTypeChecker
     tags = fields.List(fields.String, allow_none=False, default=list())
 
@@ -111,10 +91,10 @@ def handle_version(serializer, data, o):
 # noinspection PyUnusedLocal
 @EventSchema.data_handler
 def handle_numeric(serializer, data, o):
-    data['procid'] = None if o.procid is None else o.procid
-    data['trusted_uid'] = None if o.trusted_uid is None else o.procid
-    data['trusted_gid'] = None if o.trusted_gid is None else o.procid
-    data['trusted_pid'] = None if o.trusted_pid is None else o.procid
+    try:
+        data['procid'] = int(data['procid'])
+    except (ValueError, TypeError):
+        data['procid'] = None
     return data
 
 
@@ -124,42 +104,10 @@ def handle_non_numeric_procid(schema, data):
     data['procid'] = data['procid'].replace('-', '').strip()
     return data
 
-
-@python_2_unicode_compatible
-class CField(object):
-    """
-    Encapsulate custom fields in Events
-
-    Attributes
-    ----------
-    key: str
-        custom field key
-    value: str
-        custom field value
-    schema: CFieldSchema
-        schema (class variable)
-    """
-
-    __slots__ = ('key', 'value')
-
-    def __init__(self, key="", value=""):
-        self.key = key
-        self.value = value
-
-    def str(self):
-        return u"{}: {}".format(self.key, self.value)
-
-    def __str__(self):
-        return self.str()
-
-    def __repr__(self):
-        return self.str()
-
-
 @python_2_unicode_compatible
 class Event(object):
     """
-    Represents a syslog event, with optional tags, additional fields and structured data
+    Represents a syslog event, with optional tags, custom fields and structured data
 
     Attributes
     ----------
@@ -182,7 +130,7 @@ class Event(object):
     trusted_comm: str
     trusted_exe: str
     trusted_cmdline: str
-    cfields: list of CField
+    custom_fields: dictionnary of custom fields
     tags: set of str
 
     """
@@ -190,12 +138,14 @@ class Event(object):
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
                  'timereported', 'timegenerated', 'timehmac', 'iut', 'trusted_comm', 'trusted_exe',
-                 'trusted_cmdline', 'cfields', '_tags')
+                 'trusted_cmdline', 'custom_fields', '_tags')
 
-    def __init__(self, procid=None, severity="", facility="", app_name="", source="", programname="",
-                 syslogtag="", message="", uuid="", hmac="", timereported=None, timegenerated=None, timehmac=None, iut=1,
-                 trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm="", trusted_exe="", trusted_cmdline="",
-                 cfields=None, tags=None):
+    def __init__(
+            self, procid='-', severity="", facility="", app_name="", source="", programname="",
+            syslogtag="", message="", uuid=None, hmac=None, timereported=None, timegenerated=None, timehmac=None, iut=1,
+            trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm="", trusted_exe="", trusted_cmdline="",
+            custom_fields=None, tags=None
+    ):
 
         try:
             self.procid = int(procid)
@@ -233,8 +183,8 @@ class Event(object):
         self.trusted_comm = trusted_comm
         self.trusted_exe = trusted_exe
         self.trusted_cmdline = trusted_cmdline
-        self.cfields = list() if cfields is None else cfields
-        self._tags = set() if tags is None else set(tags)
+        self.custom_fields = custom_fields if custom_fields else dict()
+        self._tags = set(tags) if tags else set()
         self._parse_trusted()
         self._generate_uuid()
         self._generate_time()
@@ -245,7 +195,7 @@ class Event(object):
 
         :rtype: str
         """
-        if len(self.uuid) > 0:
+        if self.uuid:
             logger.debug("Event already has an UUID: {}".format(self.uuid))
             return
         digest = Hash128()
@@ -379,10 +329,7 @@ class Event(object):
         :param key: custom field key
         :type key: str
         """
-        for f in self.cfields:
-            if key == f.key:
-                return f.value
-        return None
+        return self.custom_fields.get(key, None)
 
     def __setitem__(self, key, value):
         """
@@ -392,31 +339,16 @@ class Event(object):
         :param value: custom field value
         :type value: str
         """
-
-        existing_indice = None
-        for (i, f) in enumerate(self.cfields):
-            if key == f.key:
-                existing_indice = i
-                break
-        if existing_indice is not None:
-            self.cfields[existing_indice] = CField(key, value)
-        else:
-            self.cfields.append(CField(key, value))
+        self.custom_fields[key] = value
 
     def __delitem__(self, key):
         """
         Deletes a custom field
 
-        :param key: constm field key
+        :param key: custom field key
         :type key: str
         """
-        existing_indice = None
-        for (i, f) in enumerate(self.cfields):
-            if key == f.key:
-                existing_indice = i
-                break
-        if existing_indice is not None:
-            del self.cfields[existing_indice]
+        del self.custom_fields[key]
 
     def update(self, d):
         """
@@ -425,12 +357,10 @@ class Event(object):
         :param d: a dictionnary of new fields
         :type d: dict
         """
-        if d is not None:
-            for (key, value) in d.items():
-                self[key] = value
+        self.custom_fields.update(d)
 
     def __iter__(self):
-        return iter([f.key for f in self.cfields])
+        return iter(self.custom_fields)
 
     def iterkeys(self):
         return self.__iter__()
@@ -443,17 +373,9 @@ class Event(object):
         :type key: str
         :rtype: bool
         """
-        return key in [f.key for f in self.cfields]
+        return key in self.custom_fields
 
-    @property
-    def fields_as_dict(self):
-        """
-        Returns the custom fields as a Python dict
 
-        :return: dict
-        :rtype: dict
-        """
-        return dict([(f.key, f.value) for f in self.cfields])
 
     def _parse_trusted(self):
         """
@@ -650,11 +572,8 @@ class Event(object):
         """
         # instantiate a dedicate schema object to avoid thread safety issues
         deserialized, errors = EventSchema().dump(self)
-        custom_fields = self.fields_as_dict
-        deserialized.update(custom_fields)
         deserialized['@timestamp'] = deserialized['timereported']
         del deserialized['timereported']
-        del deserialized['cfields']
         return ujson.dumps(deserialized)
 
     def dump(self):
@@ -664,7 +583,7 @@ class Event(object):
     def dump_sql(self, cursor):
         d = self.dump()
         d['tags'] = self.tags
-        d['cfields'] = Json(self.fields_as_dict)
+        d['custom_fields'] = Json(self.custom_fields)
         d['timereported'] = self.timereported
         d['timegenerated'] = self.timegenerated
         d['timehmac'] = self.timehmac
