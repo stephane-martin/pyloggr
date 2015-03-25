@@ -183,7 +183,6 @@ class Publisher(object):
         del self.futures_ack[tag]
         raise Return(res)
 
-
     @coroutine
     def publish_event(self, exchange, event, routing_key='', persistent=True):
         """
@@ -213,7 +212,6 @@ class Publisher(object):
             persistent=persistent
         )
         raise Return(result)
-
 
     def _on_delivery_confirmation(self, method_frame):
         confirmation_type = method_frame.method.NAME.split('.')[1].lower()
@@ -253,4 +251,3 @@ class Publisher(object):
             return
         self.connection.close()
         yield self.connection_has_been_closed_event.wait()
-
