@@ -53,7 +53,7 @@ class Field(object):
         raise NotImplementedError
 
 
-class ExtendedField(Field):
+class CustomField(Field):
     def __init__(self, name):
         Field.__init__(self, name)
         self.name = to_unicode(self.name.name if isinstance(self.name, Constant) else self.name)
@@ -62,7 +62,7 @@ class ExtendedField(Field):
         return "EField({})".format(self.name)
 
     def apply(self, ev):
-        return ev.fields_as_dict.get(self.name, None)
+        return ev[self.name]
 
 
 class PlainField(Field):
@@ -229,8 +229,8 @@ class In(Predicate):
         left = self.left if isinstance(self.left, text) else self.left.apply(ev)
         if self.right == "tags":
             return left in ev.tags
-        elif self.right == "fields":
-            return left in ev.fields_as_dict
+        elif self.right == "custom_fields":
+            return left in ev
         else:
             raise ValueError
 
@@ -250,8 +250,8 @@ class Notin(Predicate):
         left = self.left if isinstance(self.left, text) else self.left.apply(ev)
         if self.right == "tags":
             return left not in ev.tags
-        elif self.right == "fields":
-            return left not in ev.fields_as_dict
+        elif self.right == "custom_fields":
+            return left not in ev
         else:
             raise ValueError
 
@@ -284,7 +284,7 @@ class ConfigParser(object):
                 make_plain_field
             ))
 
-        fields          = Keyword("fields")
+        custom_fields   = Keyword("custom_fields")
         tags            = Keyword("tags")
 
         if_cond         = Suppress(Keyword("if"))
@@ -324,9 +324,9 @@ class ConfigParser(object):
                       | self.message | self.uuid | self.timereported | self.timegenerated | self.trusted_comm \
                       | self.trusted_exe | self.trusted_cmdline
 
-        extended_field_name = my_qs | label
-        extended_field = (Literal('[') + extended_field_name + Literal(']')).setParseAction(
-            lambda s, loc, toks: ExtendedField(toks[1])
+        custom_field_name = my_qs | label
+        custom_field = (Literal('[') + custom_field_name + Literal(']')).setParseAction(
+            lambda s, loc, toks: CustomField(toks[1])
         )
 
         filter_name = (geoip | grok | useragent)
@@ -334,37 +334,37 @@ class ConfigParser(object):
         comment_line = pythonStyleComment
 
         equals_predicate = (
-            (plain_field | extended_field | my_qs)
+            (plain_field | custom_field | my_qs)
             + equals
-            + (plain_field | extended_field | my_qs)
+            + (plain_field | custom_field | my_qs)
         )
 
         different_predicate = (
-            (plain_field | extended_field | my_qs)
+            (plain_field | custom_field | my_qs)
             + different
-            + (plain_field | extended_field | my_qs)
+            + (plain_field | custom_field | my_qs)
         )
 
         in_predicate = (
             (my_qs | label)
             + in_op
-            + (tags | fields)
+            + (tags | custom_fields)
         )
 
         notin_predicate = (
             (my_qs | label)
             + notin_op
-            + (tags | fields)
+            + (tags | custom_fields)
         )
 
         regexp_predicate = (
-            (plain_field | extended_field)
+            (plain_field | custom_field)
             + regexp_op
             + my_qs
         )
 
         regexpi_predicate = (
-            (plain_field | extended_field)
+            (plain_field | custom_field)
             + regexp_i_op
             + my_qs
         )
@@ -383,7 +383,7 @@ class ConfigParser(object):
         )
         condition = condition.setResultsName('condition')
 
-        built_string = Group(delimitedList(expr=(plain_field | extended_field | my_qs), delim='+')).setParseAction(
+        built_string = Group(delimitedList(expr=(plain_field | custom_field | my_qs), delim='+')).setParseAction(
             make_built_string
         )
 
@@ -394,7 +394,7 @@ class ConfigParser(object):
             make_filter
         )
 
-        assignment = Group(extended_field + assign + built_string).setParseAction(
+        assignment = Group(custom_field + assign + built_string).setParseAction(
             make_assignment
         )
 
@@ -445,14 +445,18 @@ class ConfigParser(object):
 def make_built_string(toks):
     return BuiltString.from_tokens(toks[0])
 
+
 def make_if_block(toks):
     return IfBlock.from_tokens(toks[0])
+
 
 def make_if_filter_block(toks):
     return IfFilterBlock.from_tokens(toks[0])
 
+
 def make_assignment(toks):
     return Assignment.from_tokens(toks[0])
+
 
 def make_tags_assignment(toks):
     return TagsAssignment.from_tokens(toks[0])
@@ -505,6 +509,7 @@ class Assignment(object):
 
 class TagsAssignment(object):
     typ = "Assignment"
+
     def __init__(self, operand, right):
         self.operand = operand
         self.right = right
