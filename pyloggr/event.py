@@ -24,6 +24,8 @@ from cryptography.hazmat.primitives import hmac as hmac_func
 from cryptography.exceptions import InvalidSignature
 from psycopg2.extras import Json
 from spooky_hash import Hash128
+
+from .utils.structured_data import parse_structured_data
 from .utils.fix_unicode import to_unicode
 from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
 from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
@@ -35,7 +37,7 @@ hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
 
 class ParsingError(ValueError):
     """
-    Triggered when a string can't be parsed into an `Event`
+    Triggered when a string can't be parsed into an :py:class:`Event`
     """
     def __init__(self, *args, **kwargs):
         self.json = kwargs['json'] if 'json' in kwargs else False
@@ -138,7 +140,6 @@ class CField(object):
         schema (class variable)
     """
 
-    schema = CFieldSchema()
     __slots__ = ('key', 'value')
 
     def __init__(self, key="", value=""):
@@ -185,7 +186,6 @@ class Event(object):
     tags: set of str
 
     """
-    schema = EventSchema()
 
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
@@ -495,8 +495,10 @@ class Event(object):
         if d.get('timehmac') is None:
             d.pop('timehmac', None)
 
+        # instantiate a dedicate schema object to avoid thread safety issues
+        schema = EventSchema()
         try:
-            return cls.schema.load(d).data
+            return schema.load(d).data
         except UnmarshallingError as ex:
             raise_from(ParsingError("Error when unmarshalling the event"), ex)
 
@@ -533,9 +535,9 @@ class Event(object):
         ev = cls._load_dictionnary(event_dict)
 
         if flds['STRUCTUREDDATA'] != '-':
-            # todo: parse and store the structured data in the event
-            ev.add_tags('rfc5424_structured_data')
-            logger.debug(flds['STRUCTUREDDATA'])
+            parsed = parse_structured_data(flds['STRUCTUREDDATA'])
+            if parsed is not None:
+                ev.add_tags('rfc5424_structured_data')
         return ev
 
     @classmethod
@@ -639,13 +641,15 @@ class Event(object):
             return cls._load_dictionnary(d)
 
     def dumps(self):
-        return self.schema.dumps(self).data
+        # instantiate a dedicate schema object to avoid thread safety issues
+        return EventSchema().dumps(self).data
 
     def dumps_elastic(self):
         """
         Dumps in JSON suited for Elasticsearch
         """
-        deserialized, errors = self.schema.dump(self)
+        # instantiate a dedicate schema object to avoid thread safety issues
+        deserialized, errors = EventSchema().dump(self)
         custom_fields = self.fields_as_dict
         deserialized.update(custom_fields)
         deserialized['@timestamp'] = deserialized['timereported']
@@ -654,7 +658,8 @@ class Event(object):
         return ujson.dumps(deserialized)
 
     def dump(self):
-        return self.schema.dump(self).data
+        # instantiate a dedicate schema object to avoid thread safety issues
+        return EventSchema().dump(self).data
 
     def dump_sql(self, cursor):
         d = self.dump()
