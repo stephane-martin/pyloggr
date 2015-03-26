@@ -81,6 +81,7 @@ CMDline         {0.trusted_cmdline}
 Message         {0.message}
 Tags            {0.tags}
 Fields          {0.custom_fields}
+Structured      {0.structured_data}
 
 """
 

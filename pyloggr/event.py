@@ -39,6 +39,7 @@ class ParsingError(ValueError):
     """
     Triggered when a string can't be parsed into an :py:class:`Event`
     """
+    # noinspection PyUnusedLocal
     def __init__(self, *args, **kwargs):
         self.json = kwargs['json'] if 'json' in kwargs else False
 
@@ -74,6 +75,7 @@ class EventSchema(Schema):
     trusted_exe = fields.String(required=False, default='')
     trusted_cmdline = fields.String(required=False, default='')
     custom_fields = fields.Field(required=False, default=dict())
+    structured_data = fields.Field(required=False, default=dict())
     # noinspection PyTypeChecker
     tags = fields.List(fields.String, allow_none=False, default=list())
 
@@ -97,12 +99,6 @@ def handle_numeric(serializer, data, o):
         data['procid'] = None
     return data
 
-
-# noinspection PyUnusedLocal
-@EventSchema.preprocessor
-def handle_non_numeric_procid(schema, data):
-    data['procid'] = data['procid'].replace('-', '').strip()
-    return data
 
 @python_2_unicode_compatible
 class Event(object):
@@ -131,6 +127,7 @@ class Event(object):
     trusted_exe: str
     trusted_cmdline: str
     custom_fields: dictionnary of custom fields
+    structured_data: dictionnary representing syslog structured data
     tags: set of str
 
     """
@@ -138,13 +135,13 @@ class Event(object):
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
                  'timereported', 'timegenerated', 'timehmac', 'iut', 'trusted_comm', 'trusted_exe',
-                 'trusted_cmdline', 'custom_fields', '_tags')
+                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags')
 
     def __init__(
             self, procid='-', severity="", facility="", app_name="", source="", programname="",
             syslogtag="", message="", uuid=None, hmac=None, timereported=None, timegenerated=None, timehmac=None, iut=1,
             trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm="", trusted_exe="", trusted_cmdline="",
-            custom_fields=None, tags=None
+            custom_fields=None, structured_data=None, tags=None
     ):
 
         try:
@@ -184,6 +181,7 @@ class Event(object):
         self.trusted_exe = trusted_exe
         self.trusted_cmdline = trusted_cmdline
         self.custom_fields = custom_fields if custom_fields else dict()
+        self.structured_data = structured_data if structured_data else dict()
         self._tags = set(tags) if tags else set()
         self._parse_trusted()
         self._generate_uuid()
@@ -375,8 +373,6 @@ class Event(object):
         """
         return key in self.custom_fields
 
-
-
     def _parse_trusted(self):
         """
         Parse the "trusted fields" that rsyslog could have generated
@@ -454,13 +450,10 @@ class Event(object):
         else:
             event_dict['syslogtag'] = event_dict['app_name']
 
-        ev = cls._load_dictionnary(event_dict)
-
         if flds['STRUCTUREDDATA'] != '-':
-            parsed = parse_structured_data(flds['STRUCTUREDDATA'])
-            if parsed is not None:
-                ev.add_tags('rfc5424_structured_data')
-        return ev
+            event_dict['structured_data'] = parse_structured_data(flds['STRUCTUREDDATA'])
+
+        return cls._load_dictionnary(event_dict)
 
     @classmethod
     def _load_syslog_rfc3164(cls, s):
