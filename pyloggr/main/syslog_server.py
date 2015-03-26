@@ -10,7 +10,7 @@ import logging
 import uuid
 import errno
 
-from tornado.gen import coroutine, Return, sleep
+from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop
 from tornado.tcpserver import TCPServer
 from tornado.netutil import bind_unix_socket, ssl_wrap_socket, errno_from_exception, bind_sockets
@@ -21,6 +21,7 @@ from past.builtins import basestring
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.config import SLEEP_TIME
+from pyloggr.utils import sleep
 from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
 
@@ -599,7 +600,8 @@ class SyslogServer(TCPServer, NotificationProducer):
 
     def __init__(self, rabbitmq_config, syslog_config, task_id):
         """
-        :type syslog_config: SyslogConfig
+        :type syslog_config: pyloggr.config.SyslogConfig
+        :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
         :type task_id: int
         """
         assert(isinstance(syslog_config, SyslogConfig))
@@ -663,7 +665,8 @@ class SyslogServer(TCPServer, NotificationProducer):
     @coroutine
     def _start_syslog(self):
         """
-        Start to listen for syslog connections
+        _start_syslog()
+        Start to listen for syslog clients
         """
         if not self.listening:
             self.listening = True

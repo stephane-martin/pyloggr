@@ -67,11 +67,15 @@ class PyloggrProcess(object):
         deadline = time.time() + MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
         countdown = MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
 
+        # get rid of sleepers
+        sleepers = [timeout for timeout in io_loop._timeouts if getattr(timeout.callback, 'sleeper', None)]
+        map(io_loop.remove_timeout, sleepers)
+
         def stop_loop(counter):
             self.logger.debug(counter)
             now = time.time()
             if now < deadline and (io_loop._callbacks or io_loop._timeouts):
-                io_loop.call_later(1, stop_loop, counter-1)
+                io_loop.call_later(1, stop_loop, counter - 1)
             else:
                 io_loop.stop()
                 self.logger.info("We stopped the IOLoop")

@@ -4,8 +4,8 @@
 from setuptools import setup, find_packages
 import os
 from os.path import dirname, abspath, join, commonprefix, expanduser
-on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 here = abspath(dirname(__file__))
 
 

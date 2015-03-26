@@ -3,7 +3,7 @@ __author__ = 'stef'
 
 import logging
 
-from tornado.gen import coroutine, sleep
+from tornado.gen import coroutine
 from tornado.ioloop import PeriodicCallback, IOLoop
 from concurrent.futures import ThreadPoolExecutor
 from psycopg2.pool import ThreadedConnectionPool, PoolError
@@ -14,6 +14,7 @@ from ..utils.constants import SQL_INSERT_QUERY, SQL_COLUMNS_STR, D_COLUMNS
 from ..rabbitmq.consumer import Consumer
 from ..rabbitmq import RabbitMQConnectionError
 from ..event import Event, ParsingError, InvalidSignature
+from pyloggr.utils import sleep
 
 
 logger = logging.getLogger(__name__)

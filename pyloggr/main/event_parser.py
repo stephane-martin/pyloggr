@@ -3,7 +3,7 @@ __author__ = 'stef'
 
 import logging
 
-from tornado.gen import coroutine, sleep
+from tornado.gen import coroutine
 from tornado.ioloop import IOLoop
 from concurrent.futures import ThreadPoolExecutor
 
@@ -13,6 +13,7 @@ from ..rabbitmq.consumer import Consumer
 from pyloggr.filters import DropException, Filters
 from ..event import Event, ParsingError, InvalidSignature
 from ..config import SLEEP_TIME, CONFIG_DIR
+from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
 

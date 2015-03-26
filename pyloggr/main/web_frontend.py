@@ -11,7 +11,7 @@ from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
-from tornado.gen import coroutine, Task, sleep
+from tornado.gen import coroutine, Task
 from tornado.ioloop import IOLoop
 from tornado.ioloop import PeriodicCallback, IOLoop
 from jinja2 import Environment, PackageLoader
@@ -27,6 +27,7 @@ from ..config import NOTIFICATIONS, RABBITMQ_HTTP
 from ..config import PARSER_CONSUMER, PGSQL_CONSUMER
 from ..config import POSTGRESQL
 from ..cache import cache
+from pyloggr.utils import sleep
 
 # todo: integrate in config
 COOKIE_SECRET = "lkqsdhfosqfhqz:foez"
