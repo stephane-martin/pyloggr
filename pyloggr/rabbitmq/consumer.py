@@ -212,7 +212,7 @@ class Consumer(object):
     def start_consuming(self):
         """
         Starts consuming messages from RabbitMQ
-        :returns: a message queue
+        :returns: a Toro message queue that stores the messages when they arrive
         :rtype: Queue
 
         Note

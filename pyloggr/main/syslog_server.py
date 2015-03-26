@@ -10,7 +10,7 @@ import logging
 import uuid
 import errno
 
-from tornado.gen import coroutine, Return
+from tornado.gen import coroutine, Return, sleep
 from tornado.ioloop import IOLoop
 from tornado.tcpserver import TCPServer
 from tornado.netutil import bind_unix_socket, ssl_wrap_socket, errno_from_exception, bind_sockets
@@ -622,19 +622,6 @@ class SyslogServer(TCPServer, NotificationProducer):
         self.publisher = None
         self._connect_rabbitmq_later = None
 
-    def _cancel_connect_later(self):
-        """
-        Used in normal shutdown process (dont try to reconnect when we have decided to shutdown)
-        """
-        if self._connect_rabbitmq_later is not None:
-            IOLoop.instance().remove_timeout(self._connect_rabbitmq_later)
-            self._connect_rabbitmq_later = None
-
-    def connect_later(self):
-        if self._connect_rabbitmq_later is None and not self.shutting_down:
-            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
-
     @coroutine
     def launch(self):
         """
@@ -654,7 +641,9 @@ class SyslogServer(TCPServer, NotificationProducer):
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             yield self.stop_all()
-            self.connect_later()
+            yield sleep(60)
+            if not self.shutting_down:
+                IOLoop.instance().add_callback(self.launch)
             return
 
         clients.register_queue(self.publisher)
@@ -666,7 +655,9 @@ class SyslogServer(TCPServer, NotificationProducer):
         clients.unregister_queue()
         self.unregister_queue()
         yield self.stop_all()
-        self.connect_later()
+        yield sleep(60)
+        if not self.shutting_down:
+            IOLoop.instance().add_callback(self.launch)
 
     @coroutine
     def _start_syslog(self):
@@ -749,7 +740,6 @@ class SyslogServer(TCPServer, NotificationProducer):
     @coroutine
     def shutdown(self):
         self.shutting_down = True
-        self._cancel_connect_later()
         yield self.stop_all()
 
     def _handle_connection(self, connection, address):

@@ -11,7 +11,8 @@ from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
-from tornado.gen import coroutine, Task
+from tornado.gen import coroutine, Task, sleep
+from tornado.ioloop import IOLoop
 from tornado.ioloop import PeriodicCallback, IOLoop
 from jinja2 import Environment, PackageLoader
 import momoko
@@ -38,6 +39,20 @@ DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
 logger = logging.getLogger(__name__)
 PERIODIC_RABBIT_STATUS_TIME = 10 * 1000
 
+class Status(object):
+    """
+    Encapsulates the status of the the various pyloggr components
+    """
+
+    def __init__(self):
+        self.rabbitmq = None
+        self.syslog = None
+        self.parser = None
+        self.postgresql = None
+        self.shipper = None
+        self.redis = None
+
+status = Status()
 
 # noinspection PyAbstractClass
 class SyslogClientsFeed(WebSocketHandler):
@@ -84,7 +99,7 @@ class QueryLogs(RequestHandler):
     pass
 
 
-class Status(RequestHandler):
+class StatusPage(RequestHandler):
     """
     Displays a status page
     """
@@ -106,9 +121,10 @@ class Status(RequestHandler):
         self.write(html_output)
 
 
-class Hello(RequestHandler):
-    def get(self):
-        self.write("Hello, world")
+
+
+
+
 
 
 class PyloggrApplication(Application):
@@ -118,7 +134,6 @@ class PyloggrApplication(Application):
         self.rabbitmq_stats = None
 
         urls = [
-            (r'/?', Hello, 'index'),
             ('/status/?', Status, 'status'),
             ('/query/?', QueryLogs, 'query'),
             ('/websocket/?', SyslogClientsFeed, 'websocket'),
@@ -157,15 +172,25 @@ class WebServer(object):
 
     @coroutine
     def launch(self):
+        IOLoop.instance().add_callback(self.start_notifications)
+        self.http_server.add_sockets(self.sockets)
+        self.start_periodics()
+
+    @coroutine
+    def start_notifications(self):
         try:
             lost_rabbit_connection = yield self.consumer.start()
         except RabbitMQConnectionError:
-            # no rabbitmq connection
-            pass
+            # no rabbitmq connection ==> no notifications
+            yield sleep(60)
+            yield self.start_notifications()
+            return
         else:
+            # we use a callback to immediately return (start_consuming never returns)
             IOLoop.instance().add_callback(self.consumer.start_consuming)
-        self.http_server.add_sockets(self.sockets)
-        self.start_periodics()
+        yield lost_rabbit_connection.wait()
+        yield sleep(60)
+        IOLoop.instance().add_callback(self.start_notifications)
 
     @coroutine
     def shutdown(self):
@@ -217,21 +242,12 @@ class PgSQLStats(Observable):
             stats = cursor.fetchone()[0]
         except psycopg2.Error:
             logger.exception("Database seems down")
-            self.available = False
+            status.postgresql = False
         else:
-            self.available = True
+            status.postgresql = True
         finally:
             if db_conn is not None:
                 db_conn.close()
-
-        if stats:
-            logger.debug("{} lines in PGSQL".format(stats))
-        # notify the websocket
-        yield self.notify_observers({
-            'action': 'pgsql.stats',
-            'loglines': stats,
-            'available': self.available
-        })
 
         self._updating = False
 
@@ -267,15 +283,15 @@ class RabbitMQStats(Observable):
                 results[name] = yield self._rabbitmq_api_client.get_queue(NOTIFICATIONS.vhost, name)
         except management.NetworkError:
             logger.warning("RabbitMQ management API does not seem available")
-            self.available = False
+            status.rabbitmq = False
         except management.HTTPError as ex:
             logger.warning("Management API answered error code: '{}'".format(ex.status))
             logger.debug("Reason: {}".format(ex.reason))
-            self.available = False
+            status.rabbitmq = False
         else:
-            self.available = True
+            status.rabbitmq = True
 
-        if self.available:
+        if status.rabbitmq:
             for name in self.queue_names:
                 self.queues[name]['messages'] = results[name]['messages']
         else:

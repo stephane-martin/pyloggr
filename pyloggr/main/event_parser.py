@@ -3,7 +3,7 @@ __author__ = 'stef'
 
 import logging
 
-from tornado.gen import coroutine
+from tornado.gen import coroutine, sleep
 from tornado.ioloop import IOLoop
 from concurrent.futures import ThreadPoolExecutor
 
@@ -28,7 +28,6 @@ class EventParser(object):
         self.to_rabbitmq_config = to_rabbitmq_config
         self.consumer = None
         self.publisher = None
-        self._publisher_later = None
         self.shutting_down = None
         self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config.qos + 5)
         self.filters = None
@@ -54,30 +53,35 @@ class EventParser(object):
             logger.warning("Can't connect to publisher")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
             yield self.stop()
-            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
+            yield sleep(60)
+            if not self.shutting_down:
+                IOLoop.instance().add_callback(self.launch)
             return
-        yield self._start_consumer()
+        # here we use a callback, so that we can directly wait for the next closed_publisher_event
+        IOLoop.instance().add_callback(self._start_consumer)
         yield closed_publisher_event.wait()
         yield self.stop()
+        yield sleep(60)
         if not self.shutting_down:
-            self._publisher_later = IOLoop.instance().call_later(SLEEP_TIME, self.launch)
+            IOLoop.instance().add_callback(self.launch)
 
     @coroutine
     def _start_consumer(self):
         self.consumer = Consumer(self.from_rabbitmq_config)
         try:
-            yield self.consumer.start(self.from_rabbitmq_config.qos)
+            closed_connection_event = yield self.consumer.start(self.from_rabbitmq_config.qos)
         except RabbitMQConnectionError:
             logger.warning("Can't connect to consumer")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-            # self.stop() stops the publisher too. so closed_publisher_event.wait() inside launch will return,
-            # and call_later will be called
+            # self.stop() stops the publisher too. so closed_publisher_event.wait() inside launch will return
             yield self.stop()
             return
-        yield self._consume()
+        else:
+            yield self._consume()           # only returns if we lose rabbitmq connection
 
     @coroutine
     def _consume(self):
+        # this coroutine never returns (as long the rabbitmq connection lives)
         message_queue = self.consumer.start_consuming()
         while True:
             if (not self.consumer) or self.shutting_down:

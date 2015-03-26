@@ -4,7 +4,7 @@ __author__ = 'stef'
 import logging
 
 from tornado.gen import coroutine, sleep
-from tornado.ioloop import PeriodicCallback
+from tornado.ioloop import PeriodicCallback, IOLoop
 from concurrent.futures import ThreadPoolExecutor
 from psycopg2.pool import ThreadedConnectionPool, PoolError
 import psycopg2
@@ -56,22 +56,22 @@ class PostgresqlShipper(object):
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             yield sleep(60)
-            yield self.launch()
+            if not self.shutting_down:
+                IOLoop.instance().add_callback(self.launch)
             return
         yield self._get_db_pool()
         self.syslog_ev_queue = self.consumer.start_consuming()
-
         self.periodic_check_queue_size = PeriodicCallback(
             self._check_queue_size, callback_time=1000
         )
         self.periodic_check_queue_size.start()
-
         yield closed_conn_event.wait()
         # we lost connection to RabbitMQ
         self.stop()
+        yield sleep(60)
         if not self.shutting_down:
-            yield sleep(60)
-            yield self.launch()
+            IOLoop.instance().add_callback(self.launch)
+
 
     @coroutine
     def _get_db_pool(self):

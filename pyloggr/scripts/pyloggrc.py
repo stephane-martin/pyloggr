@@ -11,6 +11,7 @@ import sys
 from os.path import exists, expanduser
 
 from argh.helpers import ArghParser
+from argh.exceptions import CommandError
 
 
 def set_config_env(config_dir):
@@ -30,10 +31,10 @@ def set_config_env(config_dir):
 
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not exists(config_env):
-        raise RuntimeError("Config directory '{}' doesn't exists".format(config_env))
+        raise CommandError("Config directory '{}' doesn't exists".format(config_env))
 
 
-def parser(config_dir=None):
+def parser(config_dir):
     set_config_env(config_dir)
     from pyloggr.config import set_logging, LOGGING_FILES
     set_logging(LOGGING_FILES.parser)
@@ -41,7 +42,7 @@ def parser(config_dir=None):
     ParserProcess().main()
 
 
-def syslog(config_dir=None):
+def syslog(config_dir):
     set_config_env(config_dir)
     from pyloggr.config import set_logging, LOGGING_FILES
     set_logging(LOGGING_FILES.syslog)
@@ -49,7 +50,7 @@ def syslog(config_dir=None):
     SyslogProcess().main()
 
 
-def pgsql_shipper(config_dir=None):
+def pgsql_shipper(config_dir):
     set_config_env(config_dir)
     from pyloggr.config import set_logging, LOGGING_FILES
     set_logging(LOGGING_FILES.pgsql_shipper)
@@ -57,7 +58,7 @@ def pgsql_shipper(config_dir=None):
     PgSQLShipperProcess().main()
 
 
-def frontend(config_dir=None):
+def frontend(config_dir):
     set_config_env(config_dir)
     from pyloggr.config import set_logging, LOGGING_FILES
     set_logging(LOGGING_FILES.frontend)
@@ -65,9 +66,33 @@ def frontend(config_dir=None):
     FrontendProcess().main()
 
 
+def run(process, config_dir=None):
+    disp = {
+        'frontend': frontend,
+        'syslog': syslog,
+        'pgsql_shipper': pgsql_shipper,
+        'parser': parser
+    }
+    if process not in disp:
+        raise CommandError("Unknown process. Please choose in {}".format(','.join(disp.keys())))
+    disp[process](config_dir)
+
+
+def init_db():
+    pass
+
+
+def init_rabbitmq():
+    pass
+
+
+def status():
+    pass
+
+
 def main():
     p = ArghParser()
-    p.add_commands([parser, syslog, pgsql_shipper, frontend])
+    p.add_commands([run, status, init_db, init_rabbitmq])
     try:
         p.dispatch()
     except RuntimeError as ex:
@@ -77,4 +102,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
