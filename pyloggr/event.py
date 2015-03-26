@@ -577,6 +577,7 @@ class Event(object):
         d = self.dump()
         d['tags'] = self.tags
         d['custom_fields'] = Json(self.custom_fields)
+        d['structured_data'] = Json(self.structured_data)
         d['timereported'] = self.timereported
         d['timegenerated'] = self.timegenerated
         d['timehmac'] = self.timehmac

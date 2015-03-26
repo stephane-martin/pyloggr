@@ -127,7 +127,7 @@ SEVERITY = {
 SQL_COLUMNS = [
     u"procid", u"severity", u"facility", u"app_name", u"source", u"programname", u"syslogtag", u"uuid", u"timereported",
     u"timegenerated", u"timehmac", u"trusted_pid", u"trusted_uid", u"trusted_gid", u"trusted_comm", u"trusted_exe",
-    u"trusted_cmdline", u"message", u"hmac", u"tags", u"custom_fields"
+    u"trusted_cmdline", u"message", u"hmac", u"tags", u"custom_fields", u'structured_data'
 ]
 SQL_COLUMNS_STR = u','.join(SQL_COLUMNS)
 SQL_VALUES_STR = \
@@ -140,7 +140,7 @@ SQL_VALUES_STR = \
 D_COLUMNS = u'd.procid::int, d.severity, d.facility, d.app_name, d.source, d.programname, d.syslogtag, d.uuid,' \
             u'd.timereported::timestamptz, d.timegenerated::timestamptz, d.timehmac::timestamptz, d.trusted_pid::int,' \
             u'd.trusted_uid::int, d.trusted_gid::int, d.trusted_comm, d.trusted_exe, d.trusted_cmdline, d.message, d.hmac,' \
-            u'd.tags::text[], d.custom_fields::jsonb'
+            u'd.tags::text[], d.custom_fields::jsonb, d.structured_data::jsonb'
 
 # if we already have an event with same UUID in database, that's a duplicate, and we skip the insert
 SQL_INSERT_QUERY = u"""WITH data({}) AS (
