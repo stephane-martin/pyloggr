@@ -64,8 +64,9 @@ class Consumer(object):
 
     def __init__(self, rabbitmq_config, binding_key=None):
         """
-        :param rabbitmq_config: RabbitMQ connection configuration
-        :param binding_key: optional binding key
+        :param rabbitmq_config: RabbitMQ consumer configuration
+        :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        :param binding_key: optional binding key for the consumer
         :type binding_key: str
         """
         self._parameters = ConnectionParameters(

@@ -24,6 +24,10 @@ class EventParser(object):
     """
 
     def __init__(self, from_rabbitmq_config, to_rabbitmq_config):
+        """
+        :type from_rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        :type to_rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        """
         self.from_rabbitmq_config = from_rabbitmq_config
         self.to_rabbitmq_config = to_rabbitmq_config
         self.consumer = None

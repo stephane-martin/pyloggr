@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 security_logger = logging.getLogger('security')
 
 
-
-
 class Clients(NotificationProducer):
     """
     Stores the current Syslog clients, sends notifications to observers, publishes the list of clients in Redis
@@ -513,6 +511,9 @@ class SyslogConfig(object):
 
     """
     def __init__(self, conf):
+        """
+        :type conf: pyloggr.config.SyslogConfig
+        """
         self.conf = conf
         protocol_to_port = dict()
         port_to_protocol = dict()
@@ -701,6 +702,7 @@ class SyslogServer(TCPServer, NotificationProducer):
     @coroutine
     def _stop_syslog(self):
         """
+        _stop_syslog()
         Stop listening for syslog connections
 
         Note
@@ -722,6 +724,7 @@ class SyslogServer(TCPServer, NotificationProducer):
     @coroutine
     def stop_all(self):
         """
+        stop_all()
         Stops completely the server. Stop listening for syslog clients. Close connection to RabbitMQ.
 
         Note

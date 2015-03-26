@@ -26,6 +26,9 @@ class Publisher(object):
     """
 
     def __init__(self, rabbitmq_config):
+        """
+        :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        """
 
         self._parameters = pika.ConnectionParameters(
             host=rabbitmq_config.host,
@@ -39,7 +42,6 @@ class Publisher(object):
         self.connection_has_been_closed_event = None
 
         self._reset_counters()
-
         # IOLoop.instance().add_callback(self.connect)
 
     def _reset_counters(self):

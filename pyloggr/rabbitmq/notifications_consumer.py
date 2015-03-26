@@ -17,6 +17,9 @@ class NotificationsConsumer(Consumer, Observable):
     Consumes notification that were posted in RabbitMQ
     """
     def __init__(self, rabbitmq_config, binding_key):
+        """
+        :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        """
         Consumer.__init__(self, rabbitmq_config, binding_key)
         Observable.__init__(self)
 

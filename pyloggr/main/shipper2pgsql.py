@@ -26,6 +26,8 @@ class PostgresqlShipper(object):
 
     def __init__(self, rabbitmq_config, pgsql_config):
         """
+        :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        :type pgsql_config: pyloggr.config.PostgresqlConfig
         """
         self.pgsql_config = pgsql_config
         self.syslog_ev_queue = None
@@ -71,7 +73,6 @@ class PostgresqlShipper(object):
         yield sleep(60)
         if not self.shutting_down:
             IOLoop.instance().add_callback(self.launch)
-
 
     @coroutine
     def _get_db_pool(self):

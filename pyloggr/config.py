@@ -37,6 +37,11 @@ class RabbitMQBaseConfig(object):
         self.vhost = vhost
         self.user = user
         self.password = password
+        self.queue = None
+        self.qos = None
+        self.application_id = None
+        self.event_type = None
+        self.exchange = None
 
 
 class ConsumerSchema(RabbitMQBaseSchema):
