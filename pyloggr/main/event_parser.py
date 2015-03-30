@@ -17,6 +17,8 @@ from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
 
+# todo: choose final storage for events in filter configuration
+
 
 class EventParser(object):
     """
