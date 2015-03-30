@@ -29,22 +29,22 @@ logger = logging.getLogger(__name__)
 security_logger = logging.getLogger('security')
 
 
-class Clients(NotificationProducer):
+class ListOfClients(NotificationProducer):
     """
     Stores the current Syslog clients, sends notifications to observers, publishes the list of clients in Redis
     """
-    task_id = None
+    server_id = None
 
     @classmethod
-    def set_task_id(cls, task_id):
+    def set_server_id(cls, server_id):
         """
-        :param task_id: process number
-        :type task_id: int
+        :param server_id: process number
+        :type server_id: int
         """
-        cls.task_id = task_id
+        cls.server_id = server_id
 
     def __init__(self):
-        super(Clients, self).__init__()
+        super(ListOfClients, self).__init__()
         self._clients = dict()
 
     def add(self, client_id, client):
@@ -53,29 +53,22 @@ class Clients(NotificationProducer):
         :type client: SyslogClientConnection
         """
         self._clients[client_id] = client
-        cache.syslog[self.task_id].clients = self
-        props = client.props
-        props['task_id'] = self.task_id
-        IOLoop.instance().add_callback(
-            self.notify_observers,
-            {'action': 'add_client', 'client': props},
-            'pyloggr.syslog.clients'
-        )
+        cache.syslog_list[self.server_id].clients = self
+        d = {'action': 'add_client'}
+        d.update(client.props)
+        IOLoop.instance().add_callback(self.notify_observers, d, 'pyloggr.syslog.clients')
 
     def remove(self, client_id):
         """
         :type client_id: str
         """
         if client_id in self._clients:
-            props = self._clients[client_id].props
-            props['task_id'] = self.task_id
+            d = {'action': 'remove_client'}
+            d.update(self._clients[client_id].props)
             del self._clients[client_id]
-            cache.syslog[self.task_id].clients = self
-            IOLoop.instance().add_callback(
-                self.notify_observers,
-                {'action': 'remove_client', 'client': props},
-                'pyloggr.syslog.clients'
-            )
+            cache.syslog_list[self.server_id].clients = self
+
+            IOLoop.instance().add_callback(self.notify_observers, d, 'pyloggr.syslog.clients')
 
     def __getitem__(self, client_id):
         """
@@ -93,7 +86,7 @@ class Clients(NotificationProducer):
         return self._clients.keys()
 
 
-clients = Clients()
+list_of_clients = ListOfClients()
 
 
 class SyslogClientConnection(object):
@@ -103,7 +96,7 @@ class SyslogClientConnection(object):
 
     def __init__(self, stream, address, syslog_config, rabbitmq_config, publisher):
         """
-        :type syslog_config: SyslogConfig
+        :type syslog_config: SyslogParameters
         """
         self.syslog_config = syslog_config
         self.stream = stream
@@ -141,6 +134,7 @@ class SyslogClientConnection(object):
             'client_port': self.client_port,
             'server_port': self.server_port,
             'id': self.client_id,
+            'server_id': ListOfClients.server_id
         }
 
     @coroutine
@@ -152,7 +146,7 @@ class SyslogClientConnection(object):
         .. note:: Tornado coroutine
         """
         logger.info("Syslog client has been disconnected {}:{}".format(self.client_host, self.client_port))
-        clients.remove(self.client_id)
+        list_of_clients.remove(self.client_id)
         yield []
 
     @coroutine
@@ -490,7 +484,7 @@ class SyslogClientConnection(object):
             return
 
         self.server_port = server_port
-        clients.add(self.client_id, self)
+        list_of_clients.add(self.client_id, self)
         logger.info('New client is connected {}:{} to {}'.format(
             self.client_host, self.client_port, server_port
         ))
@@ -503,13 +497,12 @@ class SyslogClientConnection(object):
         Disconnects the client
         """
         self.stream.close()
-        clients.remove(self.client_id)
+        list_of_clients.remove(self.client_id)
 
 
-class SyslogConfig(object):
+class SyslogParameters(object):
     """
     Encapsulates the syslog server configuration
-
     """
     def __init__(self, conf):
         """
@@ -598,20 +591,20 @@ class SyslogServer(TCPServer, NotificationProducer):
     :todo: receive Linux kernel messages
     """
 
-    def __init__(self, rabbitmq_config, syslog_config, task_id):
+    def __init__(self, rabbitmq_config, syslog_config, server_id):
         """
-        :type syslog_config: pyloggr.config.SyslogConfig
+        :type syslog_config: SyslogParameters
         :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
-        :type task_id: int
+        :type server_id: int
         """
-        assert(isinstance(syslog_config, SyslogConfig))
+        assert(isinstance(syslog_config, SyslogParameters))
         TCPServer.__init__(self)
         NotificationProducer.__init__(self)
 
         self.rabbitmq_config = rabbitmq_config
         self.syslog_config = syslog_config
-        self.task_id = task_id
-        Clients.set_task_id(task_id)
+        self.server_id = server_id
+        ListOfClients.set_server_id(server_id)
 
         self.publisher = None
         self._connect_rabbitmq_later = None
@@ -649,13 +642,13 @@ class SyslogServer(TCPServer, NotificationProducer):
                 IOLoop.instance().add_callback(self.launch)
             return
 
-        clients.register_queue(self.publisher)
+        list_of_clients.register_queue(self.publisher)
         self.register_queue(self.publisher)
         yield self._start_syslog()
         # the next yield only returns if rabbitmq connection has been lost
         yield rabbit_close_ev.wait()
         # don't notify to RabbitMQ... as we lost the connection to it
-        clients.unregister_queue()
+        list_of_clients.unregister_queue()
         self.unregister_queue()
         yield self.stop_all()
         yield sleep(60)
@@ -672,9 +665,14 @@ class SyslogServer(TCPServer, NotificationProducer):
             self.listening = True
             self.add_sockets(self.syslog_config.list_of_sockets)
 
-            cache.syslog[self.task_id].status = True
+            cache.syslog_list[self.server_id].status = True
+            cache.syslog_list[self.server_id].ports = self.syslog_config.port_to_protocol.keys()
             yield self.notify_observers(
-                {'action': 'add_server', 'ports': self.syslog_config.port_to_protocol.keys(), 'id': self.task_id},
+                {
+                    'action': 'add_server',
+                    'ports': self.syslog_config.port_to_protocol.keys(),
+                    'server_id': self.server_id
+                },
                 'pyloggr.syslog.servers'
             )
 
@@ -715,14 +713,16 @@ class SyslogServer(TCPServer, NotificationProducer):
         if self.listening:
             self.listening = False
             logger.info("Closing RELP clients connections")
-            for client in clients.values():
+            for client in list_of_clients.values():
                 client.stream.close()
             logger.info("Stopping the RELP server")
             self.stop()
-            cache.syslog[self.task_id].status = False
-            yield self.notify_observers({
-                'action': 'remove_server', 'subject': 'pyloggr.syslog.servers', 'id': self.task_id
-            })
+            cache.syslog_list[self.server_id].status = False
+
+            yield self.notify_observers(
+                {'action': 'remove_server', 'server_id': self.server_id},
+                'pyloggr.syslog.servers'
+            )
 
     @coroutine
     def stop_all(self):
@@ -735,8 +735,8 @@ class SyslogServer(TCPServer, NotificationProducer):
         Tornado coroutine
         """
         yield self._stop_syslog()
-        del cache.syslog[self.task_id]
-        clients.unregister_queue()
+        del cache.syslog_list[self.server_id]
+        list_of_clients.unregister_queue()
         if self.publisher:
             yield self.publisher.stop()
             self.publisher = None
