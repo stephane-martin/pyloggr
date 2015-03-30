@@ -29,13 +29,15 @@ __author__ = 'stef'
 
 from tempfile import TemporaryFile
 import logging
-logger = logging.getLogger(__name__)
+import time
 
 from subprocess32 import Popen
 from redis import StrictRedis, RedisError
 from ujson import dumps, loads
 
 from .config import REDIS
+
+logger = logging.getLogger(__name__)
 
 syslog_key = 'pyloggr.syslog.server.'
 rescue_key = 'pyloggr.rescue_queue'
@@ -56,15 +58,15 @@ class SyslogCache(object):
     ----------
     redis_conn: :py:class:`StrictRedis`
         the Redis connection
-    task_id: int
-        The syslog process task_id
+    server_id: int
+        The syslog process server_id
     """
 
-    def __init__(self, redis_conn, task_id):
+    def __init__(self, redis_conn, server_id):
         assert(isinstance(redis_conn, StrictRedis))
         self.redis_conn = redis_conn
-        self.task_id = task_id
-        self.hash_name = syslog_key + '_' + str(task_id)
+        self.server_id = server_id
+        self.hash_name = syslog_key + '_' + str(server_id)
 
     @property
     def status(self):
@@ -77,20 +79,26 @@ class SyslogCache(object):
     def status(self, new_status):
         try:
             if new_status:
-                self.redis_conn.sadd(syslog_key, self.task_id)
+                self.redis_conn.sadd(syslog_key, self.server_id)
             else:
                 # syslog server has been shut down
                 self.clients = []
-                self.redis_conn.srem(syslog_key, self.task_id)
+                self.redis_conn.srem(syslog_key, self.server_id)
             self.redis_conn.hset(self.hash_name, 'status', str(new_status))
         except RedisError:
             pass
 
     @property
     def clients(self):
+        if not self.status:
+            return []
         try:
             buf = self.redis_conn.hget(self.hash_name, 'clients')
-            return loads(buf) if buf else []
+            clients = loads(buf) if buf else []
+            if clients:
+                clients.sort(key=lambda client: client['id'])
+                return clients
+            return []
         except RedisError:
             return None
 
@@ -109,6 +117,31 @@ class SyslogCache(object):
         except RedisError:
             pass
 
+    @property
+    def ports(self):
+        """
+        :rtype: list
+        """
+        if not self.status:
+            return []
+        try:
+            buf = self.redis_conn.hget(self.hash_name, 'ports')
+            ports = loads(buf) if buf else []
+            return ports
+        except RedisError:
+            return None
+
+    @ports.setter
+    def ports(self, ports):
+        """
+        :type ports: list
+        """
+        try:
+            if self.status:
+                self.redis_conn.hset(self.hash_name, 'ports', dumps(ports))
+        except RedisError:
+            pass
+
 
 class SyslogServerList(object):
     def __init__(self, redis_conn):
@@ -118,18 +151,21 @@ class SyslogServerList(object):
         self.redis_conn = redis_conn
         self._syslog_servers_dict = dict()
 
-    def __getitem__(self, task_id):
-        if task_id not in self._syslog_servers_dict:
-            self._syslog_servers_dict[task_id] = SyslogCache(self.redis_conn, task_id)
-        return self._syslog_servers_dict[task_id]
+    def __getitem__(self, server_id):
+        """
+        :rtype: SyslogCache
+        """
+        if server_id not in self._syslog_servers_dict:
+            self._syslog_servers_dict[server_id] = SyslogCache(self.redis_conn, server_id)
+        return self._syslog_servers_dict[server_id]
 
     def __setitem__(self, key, value):
         raise NotImplementedError
 
-    def __delitem__(self, task_id):
-        hash_name = syslog_key + '_' + str(task_id)
+    def __delitem__(self, server_id):
+        hash_name = syslog_key + '_' + str(server_id)
         try:
-            self.redis_conn.srem(syslog_key, task_id)
+            self.redis_conn.srem(syslog_key, server_id)
             self.redis_conn.delete(hash_name)
         except RedisError:
             pass
@@ -142,9 +178,14 @@ class SyslogServerList(object):
 
     def keys(self):
         try:
-            return list(self.redis_conn.smembers(syslog_key))
+            keys = list(int(key) for key in self.redis_conn.smembers(syslog_key))
+            keys.sort()
+            return keys
         except RedisError:
             return None
+
+    def values(self):
+        return [self[key] for key in self.keys()]
 
     def __iter__(self):
         k = self.keys()
@@ -189,6 +230,8 @@ class Cache(object):
                         stdout=cls._temp_redis_output_file, stderr=cls._temp_redis_output_file,
                         start_new_session=True
                     )
+                    time.sleep(1)
+
                 except OSError:
                     raise CacheError("Spawning Redis failed, please check REDIS.path")
                 except ValueError:
@@ -217,12 +260,15 @@ class Cache(object):
     def shutdown(cls):
         if cls.redis_child is None:
             return
-        cls.redis_child.terminate()
+        try:
+            cls.redis_child.terminate()
+        except OSError:
+            pass
         cls.redis_child = None
         cls.redis_conn = None
 
     @property
-    def syslog(self):
+    def syslog_list(self):
         return self._syslog
 
     @property
