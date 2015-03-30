@@ -9,7 +9,7 @@ __author__ = 'stef'
 from tornado.gen import coroutine
 
 from pyloggr.scripts import PyloggrProcess
-from pyloggr.main.syslog_server import SyslogServer, SyslogConfig
+from pyloggr.main.syslog_server import SyslogServer, SyslogParameters
 from pyloggr.main.event_parser import EventParser
 from pyloggr.main.shipper2pgsql import PostgresqlShipper
 from pyloggr.main.web_frontend import WebServer
@@ -19,7 +19,7 @@ class SyslogProcess(PyloggrProcess):
     def __init__(self):
         PyloggrProcess.__init__(self, name="syslog", fork=True)
         from pyloggr.config import SYSLOG
-        self.syslog_config = SyslogConfig(SYSLOG)
+        self.syslog_config = SyslogParameters(SYSLOG)
         self.syslog_config.bind_all_sockets()
 
     @coroutine
@@ -28,7 +28,7 @@ class SyslogProcess(PyloggrProcess):
         self.pyloggr_process = SyslogServer(
             rabbitmq_config=SYSLOG_PUBLISHER,
             syslog_config=self.syslog_config,
-            task_id=self.task_id
+            server_id=self.task_id
         )
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
