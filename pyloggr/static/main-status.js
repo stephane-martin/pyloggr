@@ -1,4 +1,4 @@
 require(['./common'], function (common) {
-    require(['pyloggr/status']);
+    require(['pyloggr/js/status']);
 });
 
