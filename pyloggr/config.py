@@ -242,6 +242,8 @@ class ConfigSchema(Schema):
     SLEEP_TIME = fields.Integer(default=60)
     HMAC_KEY = fields.String(required=True)
     RABBITMQ_HTTP = fields.String(required=True)
+    COOKIE_SECRET = fields.String(required=True)
+    PIDS_DIRECTORY = fields.String(default=u'/tmp/pids')
 
     POSTGRESQL = fields.Nested(PostgresqlSchema)
     NOTIFICATIONS = fields.Nested(NotificationsSchema)
@@ -259,30 +261,17 @@ class ConfigSchema(Schema):
 slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
     'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES'
+    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY'
 ]
 
 class Config(object):
     schema = ConfigSchema()
     __slots__ = slots
 
-    def __init__(self, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, SLEEP_TIME,
-                 NOTIFICATIONS, PARSER_CONSUMER, PARSER_PUBLISHER, PGSQL_CONSUMER, SYSLOG_PUBLISHER,
-                 REDIS, SYSLOG, HMAC_KEY, RABBITMQ_HTTP, POSTGRESQL, LOGGING_FILES):
+    def __init__(self, **kw):
 
-        self.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
-        self.SLEEP_TIME = SLEEP_TIME
-        self.NOTIFICATIONS = NOTIFICATIONS
-        self.PARSER_CONSUMER = PARSER_CONSUMER
-        self.PARSER_PUBLISHER = PARSER_PUBLISHER
-        self.PGSQL_CONSUMER = PGSQL_CONSUMER
-        self.SYSLOG_PUBLISHER = SYSLOG_PUBLISHER
-        self.REDIS = REDIS
-        self.SYSLOG = SYSLOG
-        self.HMAC_KEY = b64decode(HMAC_KEY)
-        self.RABBITMQ_HTTP = RABBITMQ_HTTP
-        self.POSTGRESQL = POSTGRESQL
-        self.LOGGING_FILES = LOGGING_FILES
+        for slot in slots:
+            self.__setattr__(slot, kw.get(slot, None))
 
 
     @classmethod
@@ -307,6 +296,9 @@ class Config(object):
 
         if not c.REDIS.password:
             c.REDIS.password = None
+
+        c.HMAC_KEY = b64decode(c.HMAC_KEY)
+        c.PIDS_DIRECTORY = expanduser(c.PIDS_DIRECTORY)
 
         return c
 

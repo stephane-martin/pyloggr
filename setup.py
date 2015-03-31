@@ -35,7 +35,7 @@ requirements = [
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh', 'momoko',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
-    'requests_futures', 'configobj'
+    'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil'
 ]
 
 if on_rtd:
@@ -82,7 +82,7 @@ if __name__ == "__main__":
         ],
         entry_points={
             'console_scripts': [
-                'pyloggrc = pyloggr.scripts.pyloggrc:main'
+                'pyloggr_ctl = pyloggr.scripts.pyloggr_ctl:main'
             ]
         },
 

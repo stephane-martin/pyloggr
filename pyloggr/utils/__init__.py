@@ -8,6 +8,11 @@ The `utils` subpackage provides various tools used by other packages.
 """
 
 __author__ = 'stef'
+
+from os.path import join, exists
+import os
+import sys
+
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 
@@ -21,3 +26,13 @@ def sleep(duration):
     timeout = IOLoop.current().call_later(duration, nothing)
     timeout.callback.sleeper = True
     return f
+
+
+def remove_pid_file(name):
+    from pyloggr.config import PIDS_DIRECTORY
+    pid_file = join(PIDS_DIRECTORY, name + u".pid")
+    if exists(pid_file):
+        try:
+            os.remove(pid_file)
+        except OSError:
+            pass

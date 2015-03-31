@@ -18,7 +18,7 @@ class Mock(MagicMock):
 MOCK_MODULES = [
     'enum', 'pyev', 'pika', 'pika.adapters', 'pika.adapters.tornado_connection', 'cryptography',
     'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
-    'cryptography.exceptions', 'subprocess32', 'spooky_hash'
+    'cryptography.exceptions', 'subprocess32', 'spooky_hash', 'psutil'
 ]
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 

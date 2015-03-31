@@ -1,7 +1,6 @@
 # encoding: utf-8
 __author__ = 'stef'
 
-# todo: show RabbitMQ queues
 # todo: metrics
 
 import logging
@@ -24,12 +23,10 @@ from ..rabbitmq import RabbitMQConnectionError
 from ..utils.observable import Observable, Observer
 from ..config import NOTIFICATIONS, RABBITMQ_HTTP
 from ..config import PARSER_CONSUMER, PGSQL_CONSUMER
-from ..config import POSTGRESQL
+from ..config import POSTGRESQL, COOKIE_SECRET
 from ..cache import cache
 from pyloggr.utils import sleep
 
-# todo: integrate in config
-COOKIE_SECRET = "lkqsdhfosqfhqz:foez"
 
 DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
     POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password,
