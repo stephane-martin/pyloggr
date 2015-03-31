@@ -73,10 +73,14 @@ def store_pid(name):
         raise CommandError("Error trying to write PID file '{}'".format(pid_file))
 
 
-# todo: refactor so that the expensive imports only happen when needed
-def get_process_object(process, config_dir):
+def setup(process, config_dir):
     # after set_config_env we can start to import configuration
     set_config_env(config_dir)
+    if process not in pyloggr_process:
+        raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
+
+
+def get_process_object(process):
     from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, ParserProcess, PgSQLShipperProcess
     dispatcher = {
         'frontend': FrontendProcess,
@@ -84,8 +88,6 @@ def get_process_object(process, config_dir):
         'pgsql_shipper': PgSQLShipperProcess,
         'parser': ParserProcess
     }
-    if process not in dispatcher:
-        raise CommandError("Unknown process. Please choose in {}".format(','.join(dispatcher.keys())))
     return dispatcher[process]
 
 
@@ -102,10 +104,12 @@ def run(process, config_dir=None):
     :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser
     :param config_dir: optional configuration directory
     """
-    process_object = get_process_object(process, config_dir)
+    setup(process, config_dir)
+
     if check_pid(process) is not None:
         raise CommandError("'{}' is already running".format(process))
     store_pid(process)
+    process_object = get_process_object(process)
     try:
         _run(process_object, process)
     finally:
@@ -113,7 +117,7 @@ def run(process, config_dir=None):
         remove_pid_file(process)
 
 
-def daemon(process, config_dir=None):
+def run_daemon(process, config_dir=None):
     """
     Starts a pyloggr process as a Unix daemon
 
@@ -132,22 +136,23 @@ def daemon(process, config_dir=None):
     context.prevent_core = True
     context.files_preserve = None
     context.detach_process = True
-    process_object = get_process_object(process, config_dir)
+    setup(process, config_dir)
     if check_pid(process) is not None:
         raise CommandError("'{}' is already running".format(process))
 
     with context:
         # we store the PID after the double-fork has been done
         store_pid(process)
+        process_object = get_process_object(process)
         _run(process_object, process)
 
 
-def stop(process, config_dir=None):
+def stop_daemon(process, config_dir=None):
     """
     Stops a daemonized pyloggr process
     :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser'
     """
-    get_process_object(process, config_dir)
+    setup(process, config_dir)
     p = check_pid(process)
     if p is None:
         raise CommandError("'{}' is not running".format(process))
@@ -167,10 +172,12 @@ def init_rabbitmq():
 def status():
     pass
 
+pyloggr_process = ['frontend', 'syslog', 'pgsql_shipper', 'parser']
+
 
 def main():
     p = ArghParser()
-    p.add_commands([run, daemon, stop, status, init_db, init_rabbitmq])
+    p.add_commands([run, run_daemon, stop_daemon, status, init_db, init_rabbitmq])
     try:
         p.dispatch()
     except RuntimeError as ex:
