@@ -11,7 +11,7 @@ __author__ = 'stef'
 
 from os.path import join, exists
 import os
-import sys
+from distutils.util import strtobool
 
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
@@ -36,3 +36,11 @@ def remove_pid_file(name):
             os.remove(pid_file)
         except OSError:
             pass
+
+def ask_question(question):
+    answer = raw_input(question + ' ').strip().lower()
+    try:
+        answer = strtobool(answer)
+    except ValueError:
+        answer = False
+    return answer
