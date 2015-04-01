@@ -29,8 +29,6 @@ class RabbitMQBaseSchema(Schema):
 
 
 class RabbitMQBaseConfig(object):
-    schema = RabbitMQBaseSchema()
-
     def __init__(self, host, port, vhost, user, password):
         self.host = host
         self.port = port
@@ -53,8 +51,6 @@ class ConsumerSchema(RabbitMQBaseSchema):
 
 
 class ConsumerConfig(RabbitMQBaseConfig):
-    schema = ConsumerSchema()
-
     def __init__(self, host, port, vhost, user, password, queue, qos):
         RabbitMQBaseConfig.__init__(self, host, port, vhost, user, password)
         self.queue = queue
@@ -71,8 +67,6 @@ class PublisherSchema(RabbitMQBaseSchema):
 
 
 class PublisherConfig(RabbitMQBaseConfig):
-    schema = PublisherSchema()
-
     def __init__(self, host, port, vhost, user, password, application_id, event_type, exchange):
         RabbitMQBaseConfig.__init__(self, host, port, vhost, user, password)
         self.application_id = application_id
@@ -113,8 +107,6 @@ class PostgresqlSchema(Schema):
 
 
 class PostgresqlConfig(object):
-    schema = PostgresqlSchema()
-
     def __init__(self, host, port, user, password, dbname, tablename, max_pool, events_stack, max_seconds_without_flush,
                  connect_timeout):
         self.host = host
@@ -145,8 +137,6 @@ class RedisSchema(Schema):
 
 
 class RedisConfig(object):
-    schema = RedisSchema()
-
     def __init__(self, config_file, host, port, password, try_spawn_redis, path):
         self.config_file = config_file
         self.host = host
@@ -171,14 +161,13 @@ class SSLSchema(Schema):
 
 
 class SSLConfig(object):
-    schema = SSLSchema()
-
     def __init__(self, certfile, keyfile, ssl_version, ca_certs, cert_reqs):
         self.certfile = certfile
         self.keyfile = keyfile
         self.ssl_version = ssl_version
         self.ca_certs = ca_certs
         self.cert_reqs = cert_reqs
+
 
 class LoggingSchema(Schema):
     class Meta:
@@ -221,8 +210,24 @@ class SyslogSchema(Schema):
         return SyslogConfig(**data)
 
 
+class HarvestConfig(object):
+    def __init__(self, directory="~/harvest", remove_after=True):
+        self.directory = expanduser(directory)
+        self.remove_after = remove_after
+
+
+class HarvestSchema(Schema):
+    class Meta:
+        strict = True
+
+    directory = fields.String(default='~/harvest')
+    remove_after = fields.Boolean(default=True)
+
+    def make_object(self, data):
+        return HarvestConfig(**data)
+
+
 class SyslogConfig(object):
-    schema = SyslogSchema()
 
     def __init__(self, localhost_only, relp_port, relpssl_port, tcp_port, tcpssl_port, unix_socket, SSL=None):
         self.localhost_only = localhost_only
@@ -254,6 +259,7 @@ class ConfigSchema(Schema):
     REDIS = fields.Nested(RedisSchema)
     SYSLOG = fields.Nested(SyslogSchema)
     LOGGING_FILES = fields.Nested(LoggingSchema)
+    HARVEST = fields.Nested(HarvestSchema)
 
     def make_object(self, data):
         return Config(**data)
@@ -261,11 +267,10 @@ class ConfigSchema(Schema):
 slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
     'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY'
+    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST'
 ]
 
 class Config(object):
-    schema = ConfigSchema()
     __slots__ = slots
 
     def __init__(self, **kw):
@@ -276,7 +281,7 @@ class Config(object):
 
     @classmethod
     def load(cls, d):
-        return cls.schema.load(d).data
+        return ConfigSchema().load(d).data
 
     @classmethod
     def load_config_from_directory(cls, directory):
@@ -382,6 +387,9 @@ else:
     config_obj = Config.load_config_from_directory(CONFIG_DIR)
     for attr in slots:
         setattr(thismodule, attr, getattr(config_obj, attr))
-
+    POSTGRESQL.DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
+        POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password, POSTGRESQL.host, POSTGRESQL.port,
+        POSTGRESQL.connect_timeout
+    )
 
 
