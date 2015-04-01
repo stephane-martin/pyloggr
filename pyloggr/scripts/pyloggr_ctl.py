@@ -301,9 +301,17 @@ def init_rabbitmq(config_dir=None):
     from pyloggr.config import PARSER_PUBLISHER, SYSLOG_PUBLISHER
     from pyloggr.rabbitmq.management import Client, HTTPError
 
+
+
     @coroutine
     def init_rabbit():
         client = Client(NOTIFICATIONS.host, NOTIFICATIONS.user, NOTIFICATIONS.password)
+        create_parser_queue = False
+        create_pgsql_queue = False
+        create_syslog_exchange = False
+        create_parser_exchange = False
+        create_notifications_exchange = False
+
 
         try:
             yield client.get_queue(PARSER_CONSUMER.vhost, PARSER_CONSUMER.queue)
@@ -311,9 +319,10 @@ def init_rabbitmq(config_dir=None):
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
                 return
+            else:
+                create_parser_queue = True
         else:
             print("PARSER_CONSUMER queue already exists", file=sys.stderr)
-            return
 
         try:
             yield client.get_queue(PGSQL_CONSUMER.vhost, PGSQL_CONSUMER.queue)
@@ -321,9 +330,11 @@ def init_rabbitmq(config_dir=None):
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
                 return
+            else:
+                create_pgsql_queue = True
         else:
             print("PGSQL_CONSUMER queue already exists", file=sys.stderr)
-            return
+
 
         try:
             yield client.get_exchange(SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange)
@@ -331,9 +342,10 @@ def init_rabbitmq(config_dir=None):
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
                 return
+            else:
+                create_syslog_exchange = True
         else:
             print("SYSLOG_PUBLISHER exchange already exists", file=sys.stderr)
-            return
 
         try:
             yield client.get_exchange(PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange)
@@ -341,9 +353,10 @@ def init_rabbitmq(config_dir=None):
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
                 return
+            else:
+                create_parser_exchange = True
         else:
             print("PARSER_PUBLISHER exchange already exists", file=sys.stderr)
-            return
 
         try:
             yield client.get_exchange(NOTIFICATIONS.vhost, NOTIFICATIONS.exchange)
@@ -351,79 +364,87 @@ def init_rabbitmq(config_dir=None):
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
                 return
+            else:
+                create_notifications_exchange = True
         else:
             print("NOTIFICATIONS exchange already exists", file=sys.stderr)
-            return
 
-        try:
-            yield client.create_queue(PARSER_CONSUMER.vhost, PARSER_CONSUMER.queue,
-                                      durable=True, auto_delete=False)
-        except Exception:
-            print("Error while creating queue '{}'".format(PARSER_CONSUMER.queue), file=sys.stderr)
-            raise
-        else:
-            print("Queue '{}' was created".format(PARSER_CONSUMER.queue))
+        if create_parser_queue:
+            try:
+                yield client.create_queue(PARSER_CONSUMER.vhost, PARSER_CONSUMER.queue,
+                                          durable=True, auto_delete=False)
+            except Exception:
+                print("Error while creating queue '{}'".format(PARSER_CONSUMER.queue), file=sys.stderr)
+                raise
+            else:
+                print("Queue '{}' was created".format(PARSER_CONSUMER.queue))
 
-        try:
-            yield client.create_queue(PGSQL_CONSUMER.vhost, PGSQL_CONSUMER.queue,
-                                      durable=True, auto_delete=False)
-        except Exception:
-            print("Error while creating queue '{}'".format(PGSQL_CONSUMER.queue), file=sys.stderr)
-            raise
-        else:
-            print("Queue '{}' was created".format(PGSQL_CONSUMER.queue))
+        if create_pgsql_queue:
+            try:
+                yield client.create_queue(PGSQL_CONSUMER.vhost, PGSQL_CONSUMER.queue,
+                                          durable=True, auto_delete=False)
+            except Exception:
+                print("Error while creating queue '{}'".format(PGSQL_CONSUMER.queue), file=sys.stderr)
+                raise
+            else:
+                print("Queue '{}' was created".format(PGSQL_CONSUMER.queue))
 
-        try:
-            yield client.create_exchange(
-                SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, 'topic', durable=True, auto_delete=False
-            )
-        except Exception:
-            print("Error while creating exchange '{}'".format(SYSLOG_PUBLISHER.exchange), file=sys.stderr)
-            raise
-        else:
-            print("Exchange '{}' was created".format(SYSLOG_PUBLISHER.exchange))
+        if create_syslog_exchange:
+            try:
+                yield client.create_exchange(
+                    SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, 'topic', durable=True, auto_delete=False
+                )
+            except Exception:
+                print("Error while creating exchange '{}'".format(SYSLOG_PUBLISHER.exchange), file=sys.stderr)
+                raise
+            else:
+                print("Exchange '{}' was created".format(SYSLOG_PUBLISHER.exchange))
 
-        try:
-            yield client.create_exchange(
-                PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, 'fanout', durable=True, auto_delete=False
-            )
-        except Exception:
-            print("Error while creating exchange '{}'".format(PARSER_PUBLISHER.exchange), file=sys.stderr)
-            raise
-        else:
-            print("Exchange '{}' was created".format(PARSER_PUBLISHER.exchange))
+        if create_parser_exchange:
+            try:
+                yield client.create_exchange(
+                    PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, 'fanout', durable=True, auto_delete=False
+                )
+            except Exception:
+                print("Error while creating exchange '{}'".format(PARSER_PUBLISHER.exchange), file=sys.stderr)
+                raise
+            else:
+                print("Exchange '{}' was created".format(PARSER_PUBLISHER.exchange))
 
-        try:
-            yield client.create_exchange(
-                NOTIFICATIONS.vhost, NOTIFICATIONS.exchange, 'topic', durable=True, auto_delete=False
-            )
-        except Exception:
-            print("Error while creating exchange '{}'".format(NOTIFICATIONS.exchange), file=sys.stderr)
-            raise
-        else:
-            print("Exchange '{}' was created".format(NOTIFICATIONS.exchange))
+        if create_notifications_exchange:
+            try:
+                yield client.create_exchange(
+                    NOTIFICATIONS.vhost, NOTIFICATIONS.exchange, 'topic', durable=True, auto_delete=False
+                )
+            except Exception:
+                print("Error while creating exchange '{}'".format(NOTIFICATIONS.exchange), file=sys.stderr)
+                raise
+            else:
+                print("Exchange '{}' was created".format(NOTIFICATIONS.exchange))
 
-        try:
-            yield client.create_binding(
-                SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue, 'pyloggr.syslog.*'
-            )
-        except Exception:
-            print("Error while creating binding '{} -> {}'".format(
-                SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue), file=sys.stderr)
-            raise
-        else:
-            print("Created binding '{} -> {}'".format(SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue))
+        if create_syslog_exchange or create_parser_queue:
+            try:
+                yield client.create_binding(
+                    SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue, 'pyloggr.syslog.*'
+                )
+            except Exception:
+                print("Error while creating binding '{} -> {}'".format(
+                    SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue), file=sys.stderr)
+                raise
+            else:
+                print("Created binding '{} -> {}'".format(SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue))
 
-        try:
-            yield client.create_binding(
-                PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue
-            )
-        except Exception:
-            print("Error while creating binding '{} -> {}'".format(
-                PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue), file=sys.stderr)
-            raise
-        else:
-            print("Created binding '{} -> {}'".format(PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue))
+        if create_parser_exchange or create_pgsql_queue:
+            try:
+                yield client.create_binding(
+                    PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue
+                )
+            except Exception:
+                print("Error while creating binding '{} -> {}'".format(
+                    PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue), file=sys.stderr)
+                raise
+            else:
+                print("Created binding '{} -> {}'".format(PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue))
 
     IOLoop.instance().run_sync(init_rabbit)
 
