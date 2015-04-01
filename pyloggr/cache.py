@@ -279,7 +279,7 @@ class Cache(object):
     def available(self):
         try:
             self.redis_conn.ping()
-        except RedisError:
+        except (RedisError, AttributeError):
             return False
         return True
 
