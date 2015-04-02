@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 from mock import MagicMock
 
 os.environ['SPHINX_BUILD'] = "True"
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
 
 class Mock(MagicMock):
@@ -38,8 +39,15 @@ needs_sphinx = '1.3'
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon'
 ]
+
+if on_rtd:
+    extensions.append('sphinxcontrib.napoleon')
+else:
+    extensions.append('sphinx.ext.napoleon')
+
+
+
 
 # Napoleon settings
 napoleon_google_docstring = False
