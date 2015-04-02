@@ -40,11 +40,12 @@ requirements = [
 
 if on_rtd:
     extensions_with_problems = [
-        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'PyYAML', 'watchdog', 'psutil',
+        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil',
         'lockfile'
     ]
     for ext in extensions_with_problems:
         requirements.remove(ext)
+    requirements.append('sphinxcontrib-napoleon')
 
 test_requirements = [
     # TODO: put package test requirements here
