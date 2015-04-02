@@ -141,6 +141,7 @@ class EventParser(object):
         ====
         This method is executed in a separated thread.
 
+
         :param message: event to apply filters to, as a RabbitMQ message
         :type message: pyloggr.consumer.RabbitMQMessage
         :return: tuple(message, parsed event). parsed event is None when event couldn't be parsed.

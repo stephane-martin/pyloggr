@@ -9,6 +9,10 @@ History
 * refactored the configuration handling
 * launchers were refactored
 
+**0.1.2 (2015-03-17)**
+
+* several minor fixes
+
 **0.1.1 (2015-03-14)**
 
 * More flexible configuration (no more parenthesis, algebra on conditions)

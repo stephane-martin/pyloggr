@@ -264,18 +264,19 @@ class ConfigSchema(Schema):
     def make_object(self, data):
         return Config(**data)
 
-slots = [
+config_slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
     'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
     'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST'
 ]
 
+
 class Config(object):
-    __slots__ = slots
+    __slots__ = config_slots
 
     def __init__(self, **kw):
 
-        for slot in slots:
+        for slot in config_slots:
             self.__setattr__(slot, kw.get(slot, None))
 
 
@@ -379,13 +380,13 @@ CONFIG_DIR = os.environ.get('PYLOGGR_CONFIG_DIR')
 thismodule = sys.modules[__name__]
 if os.environ.get('SPHINX_BUILD'):
     # mock the config object when we are just building sphinx documentation
-    for attr in slots:
+    for attr in config_slots:
         setattr(thismodule, attr, 'Mock')
 else:
     # inject the config_obj attributes in this module, so that other modules can do things like
     # from config import PARAMETER
     config_obj = Config.load_config_from_directory(CONFIG_DIR)
-    for attr in slots:
+    for attr in config_slots:
         setattr(thismodule, attr, getattr(config_obj, attr))
     POSTGRESQL.DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
         POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password, POSTGRESQL.host, POSTGRESQL.port,
