@@ -28,7 +28,6 @@ MOCK_MODULES = [
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
 import pyloggr
-import sphinx
 import sphinx_readable_theme
 
 
@@ -42,13 +41,8 @@ import sphinx_readable_theme
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon'
 ]
-
-from distutils.version import LooseVersion
-if LooseVersion(sphinx.__version__) < LooseVersion("1.3"):
-    extensions.append('sphinxcontrib.napoleon')
-else:
-    extensions.append('sphinx.ext.napoleon')
 
 
 
