@@ -43,12 +43,8 @@ if on_rtd:
         'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'PyYAML', 'watchdog', 'psutil',
         'lockfile'
     ]
-    # C extensions can cause problems on readthedocs
-    requirements.remove('cryptography')
-    requirements.remove('pika')
-    requirements.remove('subprocess32')
-    requirements.remove('hiredis')
-    requirements
+    for ext in extensions_with_problems:
+        requirements.remove(ext)
 
 test_requirements = [
     # TODO: put package test requirements here
