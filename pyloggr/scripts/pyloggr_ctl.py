@@ -95,7 +95,7 @@ def _run(process):
 
 def run(process, config_dir=None):
     """
-    Starts a pyloggr process in foreground
+    Starts a pyloggr process in foreground.
 
     :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser
     :param config_dir: optional configuration directory
@@ -145,6 +145,7 @@ def run_daemon(process, config_dir=None):
 def stop(process, config_dir=None):
     """
     Stops a pyloggr process
+
     :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser'
     """
     set_config_env(config_dir)

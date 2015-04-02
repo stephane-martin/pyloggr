@@ -33,17 +33,22 @@ with open('HISTORY.rst') as history_file:
 requirements = [
     'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis', 'spooky_hash',
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
-    'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh', 'momoko',
+    'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx >= 1.3', 'pyrabbit', 'argh',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
-    'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil'
+    'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil', 'watchdog', 'momoko'
 ]
 
 if on_rtd:
+    extensions_with_problems = [
+        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'PyYAML', 'watchdog', 'psutil',
+        'lockfile'
+    ]
     # C extensions can cause problems on readthedocs
     requirements.remove('cryptography')
     requirements.remove('pika')
     requirements.remove('subprocess32')
     requirements.remove('hiredis')
+    requirements
 
 test_requirements = [
     # TODO: put package test requirements here

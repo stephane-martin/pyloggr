@@ -1,5 +1,8 @@
 # encoding: utf-8
 
+"""
+This module provides stuff to implement a Syslog server with Tornado
+"""
 
 __author__ = 'stef'
 

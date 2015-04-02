@@ -22,3 +22,4 @@ __author__ = 'stef'
 
 
 # todo: implements router for destinations: differents PGSQL db or Elasticsearch
+# todo: implement a process to gather static log files from some directory

@@ -29,8 +29,8 @@ from pyloggr.utils import sleep
 
 
 DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
-    POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password,
-    POSTGRESQL.host, POSTGRESQL.port, POSTGRESQL.connect_timeout
+    POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password, POSTGRESQL.host, POSTGRESQL.port,
+    POSTGRESQL.connect_timeout
 )
 
 logger = logging.getLogger(__name__)
@@ -189,6 +189,13 @@ class StatusPage(RequestHandler):
             rabbitmq_queues=rabbitmq_stats.queues
         )
         self.write(html_output)
+
+
+class Upload(RequestHandler):
+    pass
+    # todo: upload log files via form or via POST API
+    # put files in HARVEST directory
+
 
 
 class PyloggrApplication(Application):
