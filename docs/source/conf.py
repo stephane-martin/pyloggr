@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+# If your documentation needs a minimal Sphinx version, state it here.
+needs_sphinx = '1.3'
+
 import sys
 import os
 sys.path.insert(0, os.path.abspath('../..'))
@@ -25,13 +28,13 @@ MOCK_MODULES = [
 sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
 import pyloggr
+import sphinx
 import sphinx_readable_theme
 
 
 # -- General configuration ------------------------------------------------
 
-# If your documentation needs a minimal Sphinx version, state it here.
-needs_sphinx = '1.3'
+
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -41,7 +44,8 @@ extensions = [
     'sphinx.ext.viewcode',
 ]
 
-if on_rtd:
+from distutils.version import LooseVersion
+if LooseVersion(sphinx.__version__) < LooseVersion("1.3"):
     extensions.append('sphinxcontrib.napoleon')
 else:
     extensions.append('sphinx.ext.napoleon')
