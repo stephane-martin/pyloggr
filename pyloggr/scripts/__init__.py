@@ -31,7 +31,6 @@ class PyloggrProcess(object):
         self.task_id = -1
         self.pyloggr_process = None
 
-
     def main(self):
         self.logger = logging.getLogger('pyloggr')
 

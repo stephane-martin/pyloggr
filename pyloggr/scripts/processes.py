@@ -13,6 +13,7 @@ from pyloggr.main.syslog_server import SyslogServer, SyslogParameters
 from pyloggr.main.event_parser import EventParser
 from pyloggr.main.shipper2pgsql import PostgresqlShipper
 from pyloggr.main.web_frontend import WebServer
+from pyloggr.main.harvest import Harvest
 
 
 class SyslogProcess(PyloggrProcess):
@@ -68,5 +69,17 @@ class FrontendProcess(PyloggrProcess):
     @coroutine
     def launch(self):
         self.pyloggr_process = WebServer()
+        self.logger.info("Starting {}".format(self.name))
+        yield self.pyloggr_process.launch()
+
+
+class HarvestProcess(PyloggrProcess):
+    def __init__(self, name):
+        PyloggrProcess.__init__(self, name=name, fork=False)
+
+    @coroutine
+    def launch(self):
+        from pyloggr.config import HARVEST
+        self.pyloggr_process = Harvest(HARVEST)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()

@@ -15,6 +15,7 @@ from os.path import exists, expanduser, join
 from signal import SIGTERM
 
 import psutil
+from future.builtins import str as text
 from tornado.ioloop import IOLoop
 from tornado.gen import coroutine
 from argh.helpers import ArghParser
@@ -72,12 +73,13 @@ def check_pid(name):
 def _run(process):
     from pyloggr.config import PIDS_DIRECTORY
     from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, ParserProcess, PgSQLShipperProcess
+    from pyloggr.scripts.processes import HarvestProcess
     from pyloggr.config import set_logging, LOGGING_FILES
     from pyloggr.utils import remove_pid_file
     pid_file = join(PIDS_DIRECTORY, process + u".pid")
     try:
         with open(pid_file, 'w') as f:
-            f.write(str(os.getpid()))
+            f.write(text(os.getpid()))
     except OSError:
         raise CommandError("Error trying to write PID file '{}'".format(pid_file))
     set_logging(getattr(LOGGING_FILES, process))
@@ -85,10 +87,11 @@ def _run(process):
         'frontend': FrontendProcess,
         'syslog': SyslogProcess,
         'pgsql_shipper': PgSQLShipperProcess,
-        'parser': ParserProcess
+        'parser': ParserProcess,
+        'harvest': HarvestProcess
     }
     try:
-        dispatcher['name'](process).main()
+        dispatcher[process](process).main()
     finally:
         remove_pid_file(process)
 
@@ -479,7 +482,7 @@ def status(config_dir=None):
     else:
         print("Connected to PGSQL")
 
-pyloggr_process = ['frontend', 'syslog', 'pgsql_shipper', 'parser']
+pyloggr_process = ['frontend', 'syslog', 'pgsql_shipper', 'parser', 'harvest']
 
 
 def main():
