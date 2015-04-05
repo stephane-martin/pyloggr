@@ -12,6 +12,7 @@ import ssl
 import logging
 import uuid
 import errno
+from os.path import expanduser
 
 from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop
@@ -23,7 +24,7 @@ from past.builtins import basestring
 
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
-from pyloggr.config import SLEEP_TIME
+from pyloggr.config import SLEEP_TIME, SyslogServerConfig
 from pyloggr.utils import sleep
 from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
@@ -125,8 +126,6 @@ class SyslogClientConnection(object):
         self.dispatch_dict = {
             'tcp': self.dispatch_tcp_client,
             'relp': self.dispatch_relp_client,
-            'tcpssl': self.dispatch_tcp_client,
-            'relpssl': self.dispatch_relp_client,
             'socket': self.dispatch_tcp_client
         }
 
@@ -474,7 +473,7 @@ class SyslogClientConnection(object):
             self.disconnect()
             return
 
-        t = self.syslog_config.get_connection_type(server_port)
+        t = self.syslog_config.port_to_protocol.get(server_port, None)
 
         if t is None:
             logger.warning("Don't know what to do with port '{}'".format(self.server_port))
@@ -512,75 +511,49 @@ class SyslogParameters(object):
         :type conf: pyloggr.config.SyslogConfig
         """
         self.conf = conf
-        protocol_to_port = dict()
+        self.list_of_sockets = None
+        protocol_to_ports = dict()
         port_to_protocol = dict()
+        unix_socket_names = list()
 
-        if getattr(conf, 'relp_port', None) is not None:
-            protocol_to_port['relp'] = int(conf.relp_port)
-            port_to_protocol[int(conf.relp_port)] = 'relp'
-        if getattr(conf, 'tcp_port', None) is not None:
-            protocol_to_port['tcp'] = int(conf.tcp_port)
-            port_to_protocol[int(conf.tcp_port)] = 'tcp'
-        if getattr(conf, 'ssl', None) is not None:
-            if getattr(conf, 'tcpssl_port', None) is not None:
-                protocol_to_port['tcpssl'] = int(conf.tcpssl_port)
-                port_to_protocol[int(conf.tcpssl_port)] = 'tcpssl'
-            if getattr(conf, 'relpssl_port', None) is not None:
-                protocol_to_port['relpssl'] = int(conf.relpssl_port)
-                port_to_protocol[int(conf.relpssl_port)] = 'relpssl'
+        for server in conf.servers:
+            assert(isinstance(server, SyslogServerConfig))
+            if server.stype == 'unix':
+                unix_socket_names.append(server.socket)
+                port_to_protocol[server.socket] = 'socket'
+            else:
+                for port in server.port:
+                    port_to_protocol[port] = server.stype
+                protocol_to_ports[server.stype] = server.port
 
-        self.unix_socket_name = getattr(conf, 'unix_socket', None)
-        if self.unix_socket_name is not None:
-            protocol_to_port['socket'] = self.unix_socket_name
-            port_to_protocol[self.unix_socket_name] = 'socket'
-
-        self.protocol_to_port = protocol_to_port
+        self.protocol_to_ports = protocol_to_ports
         self.port_to_protocol = port_to_protocol
-
-        self.list_of_sockets = list()
-
-    @property
-    def ssl(self):
-        return getattr(self.conf, 'ssl', None)
-
-    def is_port_ssl(self, port):
-        """
-        Is the given port used for SSL connections ?
-        :param port: port
-        :type port: int
-        :return: True if port is used for SSL
-        :rtype: bool
-
-        """
-        if not getattr(self.conf, 'ssl', None):
-            return False
-        return port == getattr(self.conf, 'tcpssl_port', None) or port == getattr(self.conf, 'relpssl_port', None)
-
-    def get_connection_type(self, port):
-        """
-        :rtype: str
-        """
-        return self.port_to_protocol.get(port, None)
+        self.unix_socket_names = unix_socket_names
+        self.ssl_ports = list(chain.from_iterable([server.port for server in conf.servers if server.ssl is not None]))
+        self.port_to_ssl_config = {}
+        for port in self.ssl_ports:
+            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers if server.port == port]
 
     def bind_all_sockets(self):
         """
         Bind the sockets to the current server
         :return: list of bound sockets
         :rtype: list
-
         """
-        address = ''
-        if getattr(self.conf, 'localhost_only', None):
-            address = '127.0.0.1'
 
-        numeric_ports = [port for port in self.port_to_protocol if str(port).isdigit()]
-        list_of_sockets = [bind_sockets(port, address) for port in numeric_ports]
-        logger.info("Syslog Pyloggr will listen on {}".format(str(numeric_ports)))
+        list_of_sockets = list()
+        for server in self.conf.servers:
+            address = '127.0.0.1' if server.localhost_only else ''
+            for port in server.port:
+                list_of_sockets.append(
+                    bind_sockets(port, address)
+                )
 
-        if self.unix_socket_name is not None:
-            list_of_sockets.append([bind_unix_socket(self.unix_socket_name, mode=0o666)])
-            logger.info("Syslog Pyloggr will listen on unix socket '{}'".format(self.unix_socket_name))
+        if self.unix_socket_names:
+            list_of_sockets.append([bind_unix_socket(expanduser(sock), mode=0o666) for sock in self.unix_socket_names])
         self.list_of_sockets = list(chain.from_iterable(list_of_sockets))
+        logger.info("Pyloggr syslog will listen on: {}".format(','.join(str(x) for x in self.port_to_protocol.keys())))
+        logger.info("SSL ports: {}".format(','.join(str(x) for x in self.ssl_ports)))
         return self.list_of_sockets
 
 
@@ -640,7 +613,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             yield self.stop_all()
-            yield sleep(60)
+            yield sleep(SLEEP_TIME)
             if not self.shutting_down:
                 IOLoop.instance().add_callback(self.launch)
             return
@@ -654,7 +627,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         list_of_clients.unregister_queue()
         self.unregister_queue()
         yield self.stop_all()
-        yield sleep(60)
+        yield sleep(SLEEP_TIME)
         if not self.shutting_down:
             IOLoop.instance().add_callback(self.launch)
 
@@ -758,13 +731,13 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
 
         port = connection.getsockname()[1]
-        if not self.syslog_config.is_port_ssl(port):
+        if port not in self.syslog_config.ssl_ports:
             return super(SyslogServer, self)._handle_connection(connection, address)
 
         try:
             connection = ssl_wrap_socket(
                 connection,
-                self.syslog_config.ssl,
+                self.syslog_config.port_to_ssl_config[port],
                 server_side=True,
                 do_handshake_on_connect=False
             )

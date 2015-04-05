@@ -10,7 +10,7 @@ import logging
 import logging.config
 import sys
 from os.path import dirname, exists, abspath, join, expanduser
-import ssl
+import ssl as ssl_module
 from base64 import b64decode
 
 from configobj import ConfigObj
@@ -178,6 +178,7 @@ class LoggingSchema(Schema):
     parser = fields.String(default=u"~/logs/pyloggr.parser.log")
     frontend = fields.String(default=u"~/logs/pyloggr.frontend.log")
     pgsql_shipper = fields.String(default=u"~/logs/pyloggr.pgsql_shipper.log")
+    harvest = fields.String(default=u"~/logs/pyloggr.harvest.log")
     level = fields.String(default=u"INFO")
 
     def make_object(self, data):
@@ -185,29 +186,59 @@ class LoggingSchema(Schema):
 
 
 class LoggingConfig(object):
-    def __init__(self, security, syslog, parser, frontend, pgsql_shipper, level):
+    def __init__(self, security, syslog, parser, frontend, pgsql_shipper, harvest, level):
         self.security = security
         self.syslog = syslog
         self.parser = parser
         self.frontend = frontend
         self.pgsql_shipper = pgsql_shipper
         self.level = level
+        self.harvest = harvest
+
+
+class SyslogServerSchema(Schema):
+    class Meta:
+        strict = True
+
+    name = fields.String(required=True)
+    port = fields.List(fields.Integer, allow_none=False)
+    stype = fields.String(required=True)
+    localhost_only = fields.Boolean(default=False)
+    socket = fields.String(required=False, default='')
+    ssl = fields.Nested(SSLSchema, allow_none=True)
+
+    def make_object(self, data):
+        return SyslogServerConfig(**data)
+
+
+class SyslogServerConfig(object):
+    def __init__(self, name, port=None, stype='tcp', localhost_only=False, socket='', ssl=None):
+        self.name = name
+        if port is None:
+            self.port = []
+        elif isinstance(port, list):
+            self.port = [int(p) for p in port]
+        else:
+            self.port = [int(port)]
+        self.stype = stype
+        self.localhost_only = localhost_only
+        self.ssl = ssl
+        self.socket = socket
 
 
 class SyslogSchema(Schema):
     class Meta:
         strict = True
 
-    localhost_only = fields.Boolean(default=False)
-    relp_port = fields.Integer(default=-1)
-    relpssl_port = fields.Integer(default=-1)
-    tcp_port = fields.Integer(default=-1)
-    tcpssl_port = fields.Integer(default=-1)
-    unix_socket = fields.String(default=u'')
-    SSL = fields.Nested(SSLSchema)
+    servers = fields.Nested(SyslogServerSchema, allow_null=False, many=True)
 
     def make_object(self, data):
         return SyslogConfig(**data)
+
+
+class SyslogConfig(object):
+    def __init__(self, servers):
+        self.servers = servers
 
 
 class HarvestConfig(object):
@@ -225,18 +256,6 @@ class HarvestSchema(Schema):
 
     def make_object(self, data):
         return HarvestConfig(**data)
-
-
-class SyslogConfig(object):
-
-    def __init__(self, localhost_only, relp_port, relpssl_port, tcp_port, tcpssl_port, unix_socket, SSL=None):
-        self.localhost_only = localhost_only
-        self.unix_socket = unix_socket
-        self.SSL = SSL
-        self.relp_port = relp_port
-        self.relpssl_port = relpssl_port
-        self.tcp_port = tcp_port
-        self.tcpssl_port = tcpssl_port
 
 
 class ConfigSchema(Schema):
@@ -279,7 +298,6 @@ class Config(object):
         for slot in config_slots:
             self.__setattr__(slot, kw.get(slot, None))
 
-
     @classmethod
     def load(cls, d):
         return ConfigSchema().load(d).data
@@ -293,12 +311,16 @@ class Config(object):
         config = ConfigObj(infile=config_file, interpolation=False, encoding="utf-8", write_empty_values=True,
                            raise_errors=True, file_error=True)
         d = config.dict()
+        for server_name in d['SYSLOG']:
+            d['SYSLOG'][server_name]['name'] = server_name
+        d['SYSLOG'] = {'servers': d['SYSLOG'].values()}
         c = cls.load(d)
-        if c.SYSLOG.SSL is not None:
-            if c.SYSLOG.SSL.ca_certs == "None":
-                c.SYSLOG.SSL.ca_certs = ssl.CERT_NONE
-            c.SYSLOG.SSL.ssl_version = getattr(ssl, c.SYSLOG.SSL.ssl_version)
-            c.SYSLOG.SSL.cert_reqs = getattr(ssl, c.SYSLOG.SSL.cert_reqs)
+        for server in c.SYSLOG.servers:
+            if server.ssl is not None:
+                if server.ssl.ca_certs == "None":
+                    server.ssl.ca_certs = ssl_module.CERT_NONE
+                server.ssl.ssl_version = getattr(ssl_module, server.ssl.ssl_version)
+                server.ssl.cert_reqs = getattr(ssl_module, server.ssl.cert_reqs)
 
         if not c.REDIS.password:
             c.REDIS.password = None
