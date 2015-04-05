@@ -2,8 +2,10 @@
 
 MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = 10
 SLEEP_TIME = 60
+# to generate a HMAC key: base64.b64encode(os.urandom(32))
 HMAC_KEY = 'XXXXXXXX'
 RABBITMQ_HTTP = '10.71.0.1:80'
+# COOKIE_SECRET is used to sign cookies set by the web frontend
 COOKIE_SECRET = "YYYYYYYY"
 PIDS_DIRECTORY = "~/pids"
 
@@ -20,6 +22,7 @@ level = DEBUG
 host = '10.71.0.1'
 port = 5672
 user = 'python'
+# rabbitmq password
 password = 'ZZZZZZZZ'
 vhost = 'syslog'
 exchange = 'from_rsyslog'
@@ -30,6 +33,7 @@ event_type = 'RSyslog event'
 host = '10.71.0.1'
 port = 5672
 user = 'python'
+# rabbitmq password
 password = 'ZZZZZZZZ'
 vhost = 'syslog'
 exchange = 'from_parser'
@@ -40,6 +44,7 @@ event_type = 'Parsed event'
 host = '10.71.0.1'
 port = 5672
 user = 'python'
+# rabbitmq password
 password = 'ZZZZZZZZZ'
 vhost = 'syslog'
 queue = 'to_parser'
@@ -49,6 +54,7 @@ qos = 100
 host = '10.71.0.1'
 port = 5672
 user = 'python'
+# rabbitmq password
 password = 'ZZZZZZZZZ'
 vhost = 'syslog'
 queue = 'to_pgsql'
@@ -58,6 +64,7 @@ qos = 510
 host = '10.71.0.1'
 port = 5672
 user = 'python'
+# rabbitmq password
 password = 'ZZZZZZZZZ'
 vhost = 'syslog'
 exchange = 'pyloggr.pubsub'
