@@ -1,0 +1,149 @@
+# Pyloggr main configuration file (sample)
+
+MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = 10
+SLEEP_TIME = 60
+HMAC_KEY = 'XXXXXXXX'
+RABBITMQ_HTTP = '10.71.0.1:80'
+COOKIE_SECRET = "YYYYYYYY"
+PIDS_DIRECTORY = "~/pids"
+
+[LOGGING_FILES]
+security = "~/logs/pyloggr.security.log"
+syslog = "~/logs/pyloggr.syslog.log"
+parser = "~/logs/pyloggr.parser.log"
+frontend = "~/logs/pyloggr.frontend.log"
+pgsql_shipper = "~/logs/pyloggr.pgsql_shipper.log"
+harvest = "~/logs/pyloggr.harvest.log"
+level = DEBUG
+
+[SYSLOG_PUBLISHER]
+host = '10.71.0.1'
+port = 5672
+user = 'python'
+password = 'ZZZZZZZZ'
+vhost = 'syslog'
+exchange = 'from_rsyslog'
+application_id = 'Pyloggr RELP Server'
+event_type = 'RSyslog event'
+
+[PARSER_PUBLISHER]
+host = '10.71.0.1'
+port = 5672
+user = 'python'
+password = 'ZZZZZZZZ'
+vhost = 'syslog'
+exchange = 'from_parser'
+application_id = 'Pyloggr parser'
+event_type = 'Parsed event'
+
+[PARSER_CONSUMER]
+host = '10.71.0.1'
+port = 5672
+user = 'python'
+password = 'ZZZZZZZZZ'
+vhost = 'syslog'
+queue = 'to_parser'
+qos = 100
+
+[PGSQL_CONSUMER]
+host = '10.71.0.1'
+port = 5672
+user = 'python'
+password = 'ZZZZZZZZZ'
+vhost = 'syslog'
+queue = 'to_pgsql'
+qos = 510
+
+[NOTIFICATIONS]
+host = '10.71.0.1'
+port = 5672
+user = 'python'
+password = 'ZZZZZZZZZ'
+vhost = 'syslog'
+exchange = 'pyloggr.pubsub'
+
+[SYSLOG]
+
+    [[server1]]
+    port = 1513, 1514
+    localhost_only = False
+    stype = tcp
+
+    [[server2]]
+    port = 1515
+    localhost_only = False
+    stype = relp
+
+    [[server3]]
+    port = 6514
+    localhost_only = False
+    stype = tcp
+
+        [[[ssl]]]
+        certfile = '/home/stef/src/config/logcentral_chain.pem'
+        keyfile = '/home/stef/src/config/logcentral.key'
+        ssl_version = PROTOCOL_SSLv23
+        cert_reqs = CERT_OPTIONAL
+        ca_certs = None
+
+    [[server4]]
+    port = 6515
+    localhost_only = False
+    stype = 'relp'
+
+        [[[ssl]]]
+        certfile = '/home/stef/src/config/logcentral_chain.pem'
+        keyfile = '/home/stef/src/config/logcentral.key'
+        ssl_version = PROTOCOL_SSLv23
+        cert_reqs = CERT_OPTIONAL
+        ca_certs = None
+
+    [[server5]]
+    socket = '~/pyloggr.sock'
+    stype = 'unix'
+
+# todo: client X509 auth
+
+# to disable TCP listening, specify 'tcp_port = -1', or just omit it.
+# to disable socket listening, specify 'unix_socket = ""' or just omit it.
+
+# to disable TLS support, specify 'tcpssl_port = -1' and 'relpssl_port = -1', or just omit them.
+# Then you can omit the [[SSL]] section too.
+
+# ssl_version
+# PROTOCOL_SSLv23: "the highest protocol version that both the client and server support"
+
+# cert_reqs
+# - CERT_OPTIONAL In this mode no certificates will be required from the other side of the socket connection;
+# but if they are provided, validation will be attempted and an SSLError will be raised on failure.
+# - CERT_REQUIRED In this mode, certificates are required from the other side of the socket connection;
+# an SSLError will be raised if no certificate is provided, or if its validation fails.
+
+# ca_certs
+# If the value of cert_reqs is not None, then the ca_certs parameter must point to a file of CA certificates.
+# The ca_certs file contains a set of concatenated “certification authority” certificates, which are used to
+# validate certificates passed from the other end of the connection.
+
+[POSTGRESQL]
+host = '10.71.0.1'
+port = 5432
+dbname = 'syslog'
+user = 'syslog'
+password = 'AAAAAAAA'
+connect_timeout = 10
+max_pool = 10
+events_stack = 500
+max_seconds_without_flush = 60
+tablename = 'public.sysglogtest'
+
+[REDIS]
+host = '127.0.0.1'
+port = 6379
+password = ''
+try_spawn_redis = True
+path = '/usr/local/bin/redis-server'
+config_file = '/usr/local/etc/redis.conf'
+
+[HARVEST]
+directory = '~/harvest'
+remove_after = True
