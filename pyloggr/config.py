@@ -405,6 +405,9 @@ if os.environ.get('SPHINX_BUILD'):
     for attr in config_slots:
         setattr(thismodule, attr, 'Mock')
 else:
+    if CONFIG_DIR is None:
+        raise RuntimeError("Configuration directory is not specified")
+
     # inject the config_obj attributes in this module, so that other modules can do things like
     # from config import PARAMETER
     config_obj = Config.load_config_from_directory(CONFIG_DIR)
