@@ -33,7 +33,7 @@ class Filters(object):
     filters_locks = dict([(name, Lock()) for name in filters_modules])
 
     def __init__(self, config_directory):
-        self.filter_instructions = ConfigParser().parse_config_file(join(config_directory, 'filters.conf'))
+        self.filter_instructions = ConfigParser().parse_config_file(join(config_directory, 'filters_config'))
         self._filters = dict(
             [(name, module(config_directory)) for (name, module) in self.filters_modules.items()]
         )
