@@ -7,7 +7,6 @@ The `script` subpackage contains launchers for the pyloggr's processes.
 
 __author__ = 'stef'
 
-import os
 import logging
 import logging.config
 import time
@@ -19,7 +18,7 @@ from tornado.ioloop import IOLoop
 from tornado.process import fork_processes
 from tornado.gen import coroutine
 
-from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN, PIDS_DIRECTORY
+from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
 from pyloggr.cache import cache, CacheError
 
 
@@ -72,7 +71,8 @@ class PyloggrProcess(object):
         if self.fork:
             # ask the children to stop
             current_process = psutil.Process()
-            children = [child for child in current_process.children() if child.name() == 'python']
+            current_name = current_process.name()
+            children = [child for child in current_process.children() if child.name() == current_name]
             [child.send_signal(SIGTERM) for child in children]
             # wait until everyone is dead
             [child.wait() for child in children]
