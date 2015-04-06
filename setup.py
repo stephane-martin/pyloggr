@@ -14,8 +14,11 @@ def list_subdir(subdirname):
 
     l = [(root, [
         os.path.join(root, f) for f in files if (not f.endswith("secrets.py")) and (
-            f.endswith('.py') or
             f.endswith('.conf') or
+            f.endswith('.config') or
+            f.endswith('_plugins') or
+            f.endswith('.sample') or
+            f.endswith('.sql') or
             f.endswith('.patterns') or
             f.endswith('.txt'))
     ]) for root, dirs, files in os.walk(subdirname)]
@@ -52,6 +55,9 @@ test_requirements = [
 
 
 if __name__ == "__main__":
+    data_files = [(join(expanduser('~/.pyloggr'), root), list_of_files) for root, list_of_files in list_subdir('config')]
+    print("data files")
+    print(data_files)
     setup(
         name='pyloggr',
         version='0.1.3',
@@ -87,9 +93,7 @@ if __name__ == "__main__":
             ]
         },
 
-        data_files=[
-            (join(expanduser('~/.config'), root), list_of_files) for root, list_of_files in list_subdir('config')
-        ],
+        data_files=data_files,
 
         test_suite='tests',
         tests_require=test_requirements
