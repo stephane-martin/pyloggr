@@ -101,6 +101,7 @@ class PostgresqlShipper(object):
             self.periodic_check_queue_size = None
         self.consumer.stop()
 
+    @coroutine
     def shutdown(self):
         """
         Shutdowns (stops definitely) the shipper.
@@ -135,9 +136,9 @@ class PostgresqlShipper(object):
             yield self.launch()
             return
 
-        def flush_backthread(rabbit_messages, tablename):
+        def flush_backthread(rabbitmq_messages, tablename):
             events = list()
-            for rabbit_message in rabbit_messages:
+            for rabbit_message in rabbitmq_messages:
                 try:
                     ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True, json=True)
                 except ParsingError:
@@ -186,7 +187,7 @@ class PostgresqlShipper(object):
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             yield executor.submit(
-                flush_backthread, messages=msgs, tablename=self.pgsql_config.tablename
+                flush_backthread, rabbitmq_messages=msgs, tablename=self.pgsql_config.tablename
             )
         except:
             logger.exception("Flushing to PGSQL failed")
