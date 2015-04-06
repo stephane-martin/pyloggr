@@ -5,6 +5,7 @@ import logging
 from random import randint
 
 from pika import ConnectionParameters, PlainCredentials
+from pika.exceptions import ChannelClosed, ConnectionClosed
 from pika.adapters import TornadoConnection
 from tornado.ioloop import IOLoop
 from tornado.gen import coroutine, Future, chain_future, Task, Return
@@ -199,14 +200,18 @@ class Consumer(object):
 
     def _close_connection(self):
         if self.connection:
-            logger.info('Closing RabbitMQ consumer connection')
-            self.connection.close()
+            try:
+                self.connection.close()
+            except ConnectionClosed:
+                logger.info('Connection already closed')
 
     def _close_channel(self):
-        logger.info('Closing RabbitMQ consumer channel')
         if self.channel:
-            self.channel.close()
-            logger.info('Closing RabbitMQ consumer channel')
+            try:
+                self.channel.close()
+            except ChannelClosed:
+                logger.info("Channel already closed")
+                self._close_connection()
         else:
             self._close_connection()
 
