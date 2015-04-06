@@ -82,16 +82,22 @@ def _run(process):
             f.write(text(os.getpid()))
     except OSError:
         raise CommandError("Error trying to write PID file '{}'".format(pid_file))
-    set_logging(getattr(LOGGING_FILES, process))
-    dispatcher = {
-        'frontend': FrontendProcess,
-        'syslog': SyslogProcess,
-        'pgsql_shipper': PgSQLShipperProcess,
-        'parser': ParserProcess,
-        'harvest': HarvestProcess
-    }
     try:
-        dispatcher[process](process).main()
+        set_logging(getattr(LOGGING_FILES, process))
+        dispatcher = {
+            'frontend': FrontendProcess,
+            'syslog': SyslogProcess,
+            'pgsql_shipper': PgSQLShipperProcess,
+            'parser': ParserProcess,
+            'harvest': HarvestProcess
+        }
+        process_class = dispatcher[process]
+        try:
+            process_obj = process_class(process)
+        except RuntimeError as ex:
+            raise CommandError("Process '{}' initialization error: {}".format(process, str(ex)))
+        else:
+            process_obj.main()
     finally:
         remove_pid_file(process)
 
