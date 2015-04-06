@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class PostgresqlShipper(object):
     """
-    PgsqlShipper eats events from RabbitMQ, and inserts them in PostgreSQL
+    PgsqlShipper gets events from RabbitMQ, and inserts them in PostgreSQL
     """
 
     def __init__(self, rabbitmq_config, pgsql_config):
