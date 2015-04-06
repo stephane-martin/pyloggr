@@ -221,7 +221,7 @@ class Event(object):
             self.timegenerated = Arrow.utcnow().datetime
 
     def __hash__(self):
-        return self.uuid
+        return hash(self.uuid)
 
     def __eq__(self, other):
         """
