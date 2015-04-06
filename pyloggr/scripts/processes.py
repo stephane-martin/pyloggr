@@ -37,15 +37,14 @@ class SyslogProcess(PyloggrProcess):
 
 class ParserProcess(PyloggrProcess):
     def __init__(self, name):
-        PyloggrProcess.__init__(self, name=name, fork=True)
-
-    @coroutine
-    def launch(self):
         from pyloggr.config import PARSER_CONSUMER, PARSER_PUBLISHER
+        PyloggrProcess.__init__(self, name=name, fork=True)
         self.pyloggr_process = EventParser(
             from_rabbitmq_config=PARSER_CONSUMER,
             to_rabbitmq_config=PARSER_PUBLISHER
         )
+    @coroutine
+    def launch(self):
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
 
