@@ -2,7 +2,7 @@
 __author__ = 'stef'
 
 import logging
-from os.path import join
+from os.path import join, exists
 
 import geoip2.database
 from geoip2.errors import AddressNotFoundError
@@ -27,6 +27,8 @@ class GeoIPEngine(object):
         if self.reader is None:
             logger.info("Initialize GeoIP database")
             # MODE_MMAP: load the geoip database in memory
+            if not exists(self.fname):
+                raise RuntimeError('GeoIP database doesnt exist at: {}'.format(self.fname))
             self.reader = geoip2.database.Reader(self.fname, mode=geoip2.database.MODE_MMAP)
 
     def locate(self, ip_address, prefix=''):
@@ -79,6 +81,6 @@ class GeoIPEngine(object):
             prefix = kw.get('prefix', '')
             new_fields = self.locate(target_ip, prefix)
             if new_fields:
-                ev.update(new_fields)
+                ev.update_fields(new_fields)
                 return True
         return False

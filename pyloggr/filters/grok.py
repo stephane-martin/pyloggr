@@ -165,7 +165,7 @@ class GrokEngine(object):
         (pattern_name, new_fields) = self.search(ev.message, args)
         if new_fields:
             new_fields = {prefix + label: field for label, field in new_fields.items() if field is not None}
-            ev.update(new_fields)
+            ev.update_fields(new_fields)
             ev[prefix + 'grok_pattern'] = pattern_name
             return True
         return False
