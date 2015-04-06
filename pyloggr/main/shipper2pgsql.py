@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from psycopg2.pool import ThreadedConnectionPool, PoolError
 import psycopg2
 from sortedcontainers import SortedSet
+from toro import Empty
 
 from ..utils.constants import SQL_INSERT_QUERY, SQL_COLUMNS_STR, D_COLUMNS
 from ..rabbitmq.consumer import Consumer
@@ -136,8 +137,20 @@ class PostgresqlShipper(object):
             yield self.launch()
             return
 
+        logger.info("{} events to forward to PGSQL".format(size))
+        msgs = list()
+        # todo: write less redundant code
+        try:
+            for _ in range(size):
+                msgs.append(self.syslog_ev_queue.get_nowait())
+        except Empty:
+            pass
+
+        if not msgs:
+            return
+
         def flush_backthread(rabbitmq_messages, tablename):
-            events = list()
+            events = SortedSet()
             for rabbit_message in rabbitmq_messages:
                 try:
                     ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True, json=True)
@@ -150,7 +163,7 @@ class PostgresqlShipper(object):
                     security_logger.critical("Dropping one tampered event")
                     security_logger.critical(rabbit_message.body)
                 else:
-                    events.append(ev)
+                    events.add(ev)
 
             try:
                 conn = self.db_pool.getconn()
@@ -161,8 +174,6 @@ class PostgresqlShipper(object):
                 conn.autocommit = False
                 with conn.cursor() as cur:
                     # eliminate potentially duplicated events from the list
-                    # sort the events by their timestamp
-                    events = SortedSet(events)
                     # build the SQL insert query
                     values = ','.join([evt.dump_sql(cur) for evt in events])
                     # query = "INSERT INTO {} {} VALUES ".format(tablename, SQL_COLUMNS) + values
@@ -177,12 +188,6 @@ class PostgresqlShipper(object):
             finally:
                 if conn:
                     self.db_pool.putconn(conn)
-
-        logger.info("{} events to forward to PGSQL".format(size))
-        msgs = list()
-        # todo: write less redundant code
-        for _ in range(size):
-            msgs.append(self.syslog_ev_queue.get_nowait())
 
         executor = ThreadPoolExecutor(max_workers=1)
         try:
