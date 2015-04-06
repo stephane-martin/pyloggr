@@ -184,19 +184,28 @@ class SyslogClientConnection(object):
             event['syslog_client_host'] = self.client_host
             self.nb_messages_received += 1
 
-            status = yield self.publisher.publish_event(
+            future = self.publisher.publish_event(
                 exchange=self.rabbitmq_config.exchange,
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
             )
-            if status:
-                self.nb_messages_transmitted += 1
+
+            # we use `add_future` instead of just `yield` to be able to return immediately
+            # this way the RELP client can send the next event without waiting for the publication
+            IOLoop.instance().add_future(future, self._after_published_tcp)
+
+    def _after_published_tcp(self, future):
+        status, event = future.result()
+        if event is None or status is None:
+            return
+        if status:
+            self.nb_messages_transmitted += 1
+        else:
+            logger.warning("RabbitMQ publisher said NACK :(")
+            if cache.rescue.append(event):
+                logger.info("Published in RabbitMQ failed, but we pushed the event in the rescue queue")
             else:
-                logger.warning("RabbitMQ publisher said NACK :(")
-                if cache.rescue.append(bytes_event):
-                    logger.info("Published in RabbitMQ failed, but we pushed the event in the rescue queue")
-                else:
-                    logger.error("Failed to save event in redis. Event has been lost")
+                logger.error("Failed to save event in redis. Event has been lost")
 
     @coroutine
     def _process_relp_event(self, bytes_event, relp_event_id):
@@ -206,8 +215,8 @@ class SyslogClientConnection(object):
 
         We have got a Syslog event in RELP transaction
 
-        :param bytes_event: the event as bytes
-        :param relp_event_id: event ID
+        :param bytes_event: the event as `bytes`
+        :param relp_event_id: event ID given by the RELP client
 
         Note
         ====
@@ -229,18 +238,35 @@ class SyslogClientConnection(object):
 
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
+            event.relp_id = relp_event_id
 
             self.nb_messages_received += 1
 
-            status = yield self.publisher.publish_event(
+            future = self.publisher.publish_event(
                 exchange=self.rabbitmq_config.exchange,
                 event=event,
                 routing_key='pyloggr.syslog.{}'.format(self.server_port)
             )
-            if status:
+
+            # we use `add_future` instead of just `yield` to be able to return immediately
+            # this way the RELP client can send the next event without waiting for the publication
+            IOLoop.instance().add_future(future, self._after_published_relp)
+
+    def _after_published_relp(self, future):
+        status, event = future.result()
+        if event is None or status is None:
+            return
+        relp_event_ids = event.relp_id
+        if relp_event_ids is None:
+            relp_event_ids = []
+        if not isinstance(relp_event_ids, list):
+            relp_event_ids = [relp_event_ids]
+        if status:
+            for relp_event_id in relp_event_ids:
                 self.stream.write('{} rsp 6 200 OK\n'.format(relp_event_id))
-                self.nb_messages_transmitted += 1
-            else:
+            self.nb_messages_transmitted += 1
+        else:
+            for relp_event_id in relp_event_ids:
                 logger.warning(
                     "RabbitMQ publisher said NACK, sending 500 to RELP client. Event ID: {}".format(relp_event_id)
                 )
@@ -532,7 +558,7 @@ class SyslogParameters(object):
         self.ssl_ports = list(chain.from_iterable([server.port for server in conf.servers if server.ssl is not None]))
         self.port_to_ssl_config = {}
         for port in self.ssl_ports:
-            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers if server.port == port]
+            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers if port in server.port][0]
 
     def bind_all_sockets(self):
         """

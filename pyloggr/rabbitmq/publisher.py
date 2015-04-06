@@ -213,7 +213,7 @@ class Publisher(object):
             message_id=event.uuid,
             persistent=persistent
         )
-        raise Return(result)
+        raise Return((result, event))
 
     def _on_delivery_confirmation(self, method_frame):
         confirmation_type = method_frame.method.NAME.split('.')[1].lower()
