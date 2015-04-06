@@ -292,6 +292,7 @@ class RescueQueue(object):
         self.redis_conn = redis_conn
 
     def append(self, bytes_ev):
+        # todo: refactor so that we can accept an Event instead of bytes
         try:
             self.redis_conn.rpush(rescue_key, bytes_ev)
         except RedisError:
