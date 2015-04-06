@@ -463,6 +463,7 @@ def status(config_dir=None):
             print(p_name + " is not running")
     print()
     from pyloggr.cache import cache
+    cache.initialize()
     print("Redis is running" if cache.available else "Redis is not running")
     from pyloggr.config import NOTIFICATIONS
     from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
