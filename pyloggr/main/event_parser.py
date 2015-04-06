@@ -37,7 +37,8 @@ class EventParser(object):
         self.publisher = None
         self.shutting_down = None
         self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config.qos + 5)
-        self.filters = None
+        self.filters = Filters(CONFIG_DIR)
+        self.filters.open()
 
     @coroutine
     def launch(self):
@@ -48,10 +49,6 @@ class EventParser(object):
         ====
         Coroutine
         """
-
-        if self.filters is None:
-            self.filters = Filters(CONFIG_DIR)
-            self.filters.open()
 
         self.publisher = Publisher(self.to_rabbitmq_config)
         try:
