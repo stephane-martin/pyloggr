@@ -8,9 +8,11 @@ EventSchema is used for marshalling/unmarshalling of Event objects.
 
 __author__ = 'stef'
 
-
 import logging
 from base64 import b64encode, b64decode
+from copy import copy
+from itertools import chain
+
 import ujson
 from arrow import Arrow
 from marshmallow import Schema, fields
@@ -100,6 +102,8 @@ def handle_numeric(serializer, data, o):
     return data
 
 
+# todo: make severity, facility, app_name, source, message, timereported read_only
+
 @python_2_unicode_compatible
 class Event(object):
     """
@@ -135,7 +139,7 @@ class Event(object):
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
                  'timereported', 'timegenerated', 'timehmac', 'iut', 'trusted_comm', 'trusted_exe',
-                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags')
+                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags', 'relp_id')
 
     def __init__(
             self, procid='-', severity="", facility="", app_name="", source="", programname="",
@@ -186,6 +190,7 @@ class Event(object):
         self._parse_trusted()
         self._generate_uuid()
         self._generate_time()
+        self.relp_id = None
 
     def _generate_uuid(self):
         """
@@ -204,9 +209,8 @@ class Event(object):
         digest.update(self.source.encode("utf-8"))
         digest.update(self.message.encode("utf-8"))
         if self.timereported is not None:
-            digest.update(str(Arrow.fromdatetime(self.timereported)))
+            digest.update(str(Arrow.fromdatetime(self.timereported).to('utc')))
         self.uuid = b64encode(digest.digest())
-        logger.debug("New UUID: {}".format(self.uuid))
         return self.uuid
 
     def _generate_time(self):
@@ -245,11 +249,11 @@ class Event(object):
         h.update(self.message.encode("utf-8"))
         if self.timereported is not None:
             # take care of timezones...
-            h.update(str(Arrow.fromdatetime(self.timereported)))
+            h.update(str(Arrow.fromdatetime(self.timereported).to('utc')))
         h.update(str(self.timehmac))
         return h
 
-    def generate_hmac(self):
+    def generate_hmac(self, verify=True):
         """
         Generate a HMAC from the fields: severity, facility, app_name, source, message, timereported
 
@@ -257,8 +261,7 @@ class Event(object):
         :rtype: str
         :raise InvalidSignature: if HMAC already exists but is invalid
         """
-        if self.hmac:
-            logger.warning("Event already has a HMAC")
+        if self.hmac and verify:
             self.verify_hmac()
             return
         self.timehmac = Arrow.utcnow().datetime
@@ -285,8 +288,6 @@ class Event(object):
         except InvalidSignature:
             logger.error("Event (UUID: {}) has an invalid HMAC signature".format(self.uuid))
             raise
-        else:
-            logger.debug("HMAC of event is valid (UUID: {})".format(self.uuid))
         return True
 
     @property
@@ -348,7 +349,7 @@ class Event(object):
         """
         del self.custom_fields[key]
 
-    def update(self, d):
+    def update_fields(self, d):
         """
         Add some custom fields to the event
 
@@ -362,6 +363,9 @@ class Event(object):
 
     def iterkeys(self):
         return self.__iter__()
+
+    def keys(self):
+        return self.custom_fields.keys()
 
     def __contains__(self, key):
         """
@@ -594,3 +598,44 @@ class Event(object):
         Apply some filters to the event
         """
         filters.apply(self)
+
+    @classmethod
+    def merge(cls, events):
+        """
+        Merge events into a single one
+        :param events: events to merge
+        :type events: list of Events
+        :return: global single Event
+        :rtype: Event
+        """
+        if not events:
+            return None
+        unique_events = list(set(events))
+        nb = len(unique_events)
+        if nb == 1:
+            return unique_events[0]
+        # copy the first event, as a base for the merged event
+        merged_event = copy(unique_events[0])
+        assert(isinstance(merged_event, Event))
+        # merge messages
+        merged_event.message = u'\n'.join(event.message for event in unique_events)
+        # merge tags
+        merged_event._tags = set(chain.from_iterable(event.tags for event in unique_events))
+        # merge custom fields
+        super_dict = {}
+        field_keys = set(field_key for event in unique_events for flds in event for field_key in flds)
+        for field_key in field_keys:
+            super_dict[field_key] = [event[field_key] for event in unique_events if field_key in event][0]
+        merged_event.custom_fields = super_dict
+        merged_event['merged_from_nb_event'] = nb
+        # merge RELP ids
+        merged_event.relp_id = chain.from_iterable(set(event.relp_id) for event in unique_events if event.relp_id is not None)
+        merged_event.relp_id = list(set(merged_event.relp_id))
+        # generate a new UUID
+        merged_event._generate_uuid()
+        # generate a new HMAC if needed
+        if merged_event.hmac:
+            merged_event.generate_hmac(verify=False)
+        # todo: merge structured data
+
+        return merged_event
