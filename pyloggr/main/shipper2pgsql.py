@@ -137,7 +137,6 @@ class PostgresqlShipper(object):
             yield self.launch()
             return
 
-        logger.info("{} events to forward to PGSQL".format(size))
         msgs = list()
         # todo: write less redundant code
         try:
@@ -148,6 +147,7 @@ class PostgresqlShipper(object):
 
         if not msgs:
             return
+        logger.info("{} events to forward to PGSQL".format(len(msgs)))
 
         def flush_backthread(rabbitmq_messages, tablename):
             events = SortedSet()
@@ -173,7 +173,6 @@ class PostgresqlShipper(object):
             try:
                 conn.autocommit = False
                 with conn.cursor() as cur:
-                    # eliminate potentially duplicated events from the list
                     # build the SQL insert query
                     values = ','.join([evt.dump_sql(cur) for evt in events])
                     # query = "INSERT INTO {} {} VALUES ".format(tablename, SQL_COLUMNS) + values
