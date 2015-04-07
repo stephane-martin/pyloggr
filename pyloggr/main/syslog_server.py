@@ -256,21 +256,17 @@ class SyslogClientConnection(object):
         status, event = future.result()
         if event is None or status is None:
             return
-        relp_event_ids = event.relp_id
-        if relp_event_ids is None:
-            relp_event_ids = []
-        if not isinstance(relp_event_ids, list):
-            relp_event_ids = [relp_event_ids]
+        relp_event_id = event.relp_id
+        if relp_event_id is None:
+            return
         if status:
-            for relp_event_id in relp_event_ids:
-                self.stream.write('{} rsp 6 200 OK\n'.format(relp_event_id))
+            self.stream.write('{} rsp 6 200 OK\n'.format(relp_event_id))
             self.nb_messages_transmitted += 1
         else:
-            for relp_event_id in relp_event_ids:
-                logger.warning(
-                    "RabbitMQ publisher said NACK, sending 500 to RELP client. Event ID: {}".format(relp_event_id)
-                )
-                self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
+            logger.warning(
+                "RabbitMQ publisher said NACK, sending 500 to RELP client. Event ID: {}".format(relp_event_id)
+            )
+            self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
 
     @coroutine
     def _process_relp_command(self, relp_event_id, command, data):
