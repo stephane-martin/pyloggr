@@ -628,9 +628,6 @@ class Event(object):
             super_dict[field_key] = [event[field_key] for event in unique_events if field_key in event][0]
         merged_event.custom_fields = super_dict
         merged_event['merged_from_nb_event'] = nb
-        # merge RELP ids
-        merged_event.relp_id = chain.from_iterable(set(event.relp_id) for event in unique_events if event.relp_id is not None)
-        merged_event.relp_id = list(set(merged_event.relp_id))
         # generate a new UUID
         merged_event._generate_uuid()
         # generate a new HMAC if needed
