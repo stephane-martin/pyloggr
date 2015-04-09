@@ -19,7 +19,7 @@ from pyloggr.event import Event
 # merge events when they were emitted in "interval" ms
 interval_same_event = 250
 
-queue_max_age = 2000
+queue_max_age = 5000
 
 
 class Queue(list):
@@ -33,13 +33,21 @@ class Queue(list):
 
     @coroutine
     def publish(self):
-        merged_event = Event.merge(self)
+        self.last_action = Arrow.utcnow()
+        l = len(self)
+        if l == 0:
+            return
+        elif l == 1:
+            merged_event = self[0]
+        else:
+            merged_event = Event.merge(self)
         # publish the merged event
         status, ev = yield self.publisher.publish_event(self.exchange, merged_event, self.routing_key, self.persistent)
-        self.last_action = Arrow.utcnow()
+        # proclaim that all the events that are store in this queue have been published
         for event in self:
             event.have_been_published.set_result(status)
         self[:] = []
+        self.last_action = Arrow.utcnow()
 
     def append(self, event):
         super(Queue, self).append(event)
@@ -59,6 +67,8 @@ class TimeBasedPacker(object):
         """
         self.queues = dict()
         self.publisher = publisher
+        self.flushing = False
+
 
     @coroutine
     def publish_event(self, exchange, event, routing_key='', persistent=True):
@@ -112,8 +122,15 @@ class TimeBasedPacker(object):
         """
         Periodically flush the events stored in Packer queues
         """
+        if self.flushing:
+            return
+        self.flushing = True
         now = Arrow.utcnow()
+        publications = list()
         for queue in self.queues:
             age = fabs((now - queue.last_action).total_seconds()) * 1000
-            if age > queue_max_age:
-                yield queue.publish()
+            if age > queue_max_age and len(queue) > 0:
+                publications.append(queue.publish())
+        if publications:
+            yield publications
+        self.flushing = False
