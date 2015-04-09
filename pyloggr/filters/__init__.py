@@ -68,7 +68,7 @@ class Filters(object):
                 return return_value
 
             elif isinstance(statement, IfBlock):
-                if statement.condition.apply(ev):
+                if statement.condition.eval(ev):
                     map(apply_one_statement, statement.statements)
                 elif statement.else_statements:
                     map(apply_one_statement, statement.else_statements)
