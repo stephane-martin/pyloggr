@@ -182,6 +182,7 @@ class SyslogClientConnection(object):
 
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
+            event['syslog_protocol'] = 'tcp'
             self.nb_messages_received += 1
 
             future = self.publisher.publish_event(
@@ -238,6 +239,7 @@ class SyslogClientConnection(object):
 
             event['syslog_server_port'] = self.server_port
             event['syslog_client_host'] = self.client_host
+            event['syslog_protocol'] = 'relp'
             event.relp_id = relp_event_id
 
             self.nb_messages_received += 1
