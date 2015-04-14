@@ -1,3 +1,12 @@
 ==========
 Deployment
 ==========
+
+No daemons
+==========
+
+
+
+Supervisord
+===========
+

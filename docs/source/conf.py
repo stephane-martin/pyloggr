@@ -20,7 +20,7 @@ class Mock(MagicMock):
 # let's mock some modules so that readthedocs doesn't complain
 
 MOCK_MODULES = [
-    'enum', 'pyev', 'pika', 'pika.adapters', 'pika.adapters.tornado_connection', 'cryptography',
+    'enum', 'pyev', 'pika', 'pika.adapters', 'pika.exceptions', 'pika.adapters.tornado_connection', 'cryptography',
     'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
     'cryptography.exceptions', 'subprocess32', 'spooky_hash', 'psutil', 'watchdog', 'PyYAML',
     'lockfile'
@@ -41,10 +41,11 @@ import sphinx_readable_theme
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon'
+    'sphinx.ext.napoleon',
+    'sphinx.ext.graphviz'
 ]
 
-
+graphviz_output_format = "svg"
 
 
 # Napoleon settings
