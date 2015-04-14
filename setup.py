@@ -4,6 +4,7 @@
 from setuptools import setup, find_packages
 import os
 from os.path import dirname, abspath, join, commonprefix, expanduser
+from Cython.Build import cythonize
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 here = abspath(dirname(__file__))
@@ -56,8 +57,6 @@ test_requirements = [
 
 if __name__ == "__main__":
     data_files = [(join(expanduser('~/.pyloggr'), root), list_of_files) for root, list_of_files in list_subdir('config')]
-    print("data files")
-    print(data_files)
     setup(
         name='pyloggr',
         version='0.1.3',
@@ -68,7 +67,7 @@ if __name__ == "__main__":
         url='https://github.com/stephane-martin/pyloggr',
         packages=find_packages(exclude=['tests']),
         setup_requires=[
-            'setuptools_git', 'setuptools', 'twine', 'wheel', 'mock'
+            'setuptools_git', 'setuptools', 'twine', 'wheel', 'mock', 'cython'
         ],
         include_package_data=True,
         install_requires=requirements,
@@ -94,7 +93,7 @@ if __name__ == "__main__":
         },
 
         data_files=data_files,
-
         test_suite='tests',
-        tests_require=test_requirements
+        tests_require=test_requirements,
+        ext_modules=cythonize("pyloggr/utils/fix_unicode.pyx")
     )
