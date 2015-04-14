@@ -4,10 +4,12 @@
 from setuptools import setup, find_packages
 import os
 from os.path import dirname, abspath, join, commonprefix, expanduser
-from Cython.Build import cythonize
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 here = abspath(dirname(__file__))
+
+if not on_rtd:
+    from Cython.Build import cythonize
 
 
 def list_subdir(subdirname):
@@ -44,8 +46,7 @@ requirements = [
 
 if on_rtd:
     extensions_with_problems = [
-        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil',
-        'lockfile'
+        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil', 'lockfile'
     ]
     for ext in extensions_with_problems:
         requirements.remove(ext)
@@ -95,5 +96,5 @@ if __name__ == "__main__":
         data_files=data_files,
         test_suite='tests',
         tests_require=test_requirements,
-        ext_modules=cythonize("pyloggr/utils/fix_unicode.pyx")
+        ext_modules=None if on_rtd else cythonize("pyloggr/utils/fix_unicode.pyx")
     )
