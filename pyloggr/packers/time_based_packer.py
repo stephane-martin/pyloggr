@@ -49,7 +49,7 @@ class TimeBasedPacker(BasePacker):
         :type persistent: bool
         """
 
-        if event._timereported is None:
+        if event.timereported is None:
             # we don't know when the event was emitted, so we just publish it
             status = yield self.publisher.publish_event(exchange, event, routing_key, persistent)
             raise Return((status, event))
@@ -72,7 +72,7 @@ class TimeBasedPacker(BasePacker):
             raise Return((status, event))
 
         first_event = queue[0]
-        diff = event._timereported - first_event.timereported
+        diff = event.timereported - first_event.timereported
         diff = fabs(diff.total_seconds()) * 1000
         if diff >= MERGE_EVENT_WINDOW:
             yield queue.publish()
