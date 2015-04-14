@@ -16,6 +16,8 @@ from distutils.util import strtobool
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 
+from .fix_unicode import to_unicode
+
 
 def sleep(duration):
     f = Future()
@@ -36,6 +38,7 @@ def remove_pid_file(name):
             os.remove(pid_file)
         except OSError:
             pass
+
 
 def ask_question(question):
     answer = raw_input(question + ' ').strip().lower()
