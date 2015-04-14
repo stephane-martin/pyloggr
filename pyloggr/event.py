@@ -8,6 +8,7 @@ EventSchema is used for marshalling/unmarshalling of Event objects.
 
 __author__ = 'stef'
 
+
 import logging
 from base64 import b64encode, b64decode
 from copy import copy
@@ -15,11 +16,15 @@ from itertools import chain
 
 import ujson
 from arrow import Arrow
+import arrow
+import arrow.parser
+import dateutil.parser
+from datetime import datetime
 from marshmallow import Schema, fields
 from marshmallow.exceptions import UnmarshallingError
 from future.utils import python_2_unicode_compatible, raise_from
 # noinspection PyPackageRequirements
-import past.builtins
+from past.builtins import basestring as basestr
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import hmac as hmac_func
@@ -57,29 +62,35 @@ class EventSchema(Schema):
         ordered = True
 
     procid = fields.String(required=False, default="-")                # string because procid can be "-"
-    severity = fields.String(required=True)
-    facility = fields.String(required=True)
-    app_name = fields.String(required=False, default='')
-    source = fields.String(required=True)
-    programname = fields.String(required=False, default='')
-    syslogtag = fields.String(required=False, default='')
-    message = fields.String(required=True)
-    iut = fields.Integer(required=False, default=1)
+    trusted_gid = fields.String(required=False, default=None)
     uuid = fields.String(required=False, default=None)
     hmac = fields.String(required=False, default=None)
-    timereported = fields.DateTime(required=False, default=None)
-    timegenerated = fields.DateTime(required=False, default=None)
-    timehmac = fields.DateTime(required=False, default=None)
-    trusted_pid = fields.Integer(required=False, default=None)
-    trusted_uid = fields.Integer(required=False, default=None)
-    trusted_gid = fields.String(required=False, default=None)
+
+    severity = fields.String(required=True)
+    facility = fields.String(required=True)
+    source = fields.String(required=True)
+    message = fields.String(required=True)
+
+    app_name = fields.String(required=False, default='')
+    programname = fields.String(required=False, default='')
+    syslogtag = fields.String(required=False, default='')
     trusted_comm = fields.String(required=False, default='')
     trusted_exe = fields.String(required=False, default='')
     trusted_cmdline = fields.String(required=False, default='')
+
+    iut = fields.Integer(required=False, default=1)
+    trusted_pid = fields.Integer(required=False, default=None)
+    trusted_uid = fields.Integer(required=False, default=None)
+
     custom_fields = fields.Field(required=False, default=dict())
     structured_data = fields.Field(required=False, default=dict())
+
     # noinspection PyTypeChecker
     tags = fields.List(fields.String, allow_none=False, default=list())
+
+    timereported = fields.DateTime(required=False, default=None)
+    timegenerated = fields.DateTime(required=False, default=None)
+    timehmac = fields.DateTime(required=False, default=None)
 
     def make_object(self, data):
         return Event(**data)
@@ -102,7 +113,24 @@ def handle_numeric(serializer, data, o):
     return data
 
 
-# todo: make severity, facility, app_name, source, message, timereported read_only
+def make_arrow_datetime(dt):
+    if dt is None:
+        return None
+    if isinstance(dt, Arrow):
+        return dt
+    if isinstance(dt, datetime):
+        return Arrow.fromdatetime(dt).to('utc')
+    if isinstance(dt, basestr):
+        try:
+            return arrow.get(dt)
+        except arrow.parser.ParserError:
+            try:
+                return Arrow.fromdatetime(dateutil.parser.parse(dt)).to('utc')
+            except ValueError:
+                return None
+
+
+# todo: make severity, facility, app_name, source, message read_only
 
 @python_2_unicode_compatible
 class Event(object):
@@ -138,14 +166,14 @@ class Event(object):
 
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
-                 'timereported', 'timegenerated', 'timehmac', 'iut', 'trusted_comm', 'trusted_exe',
+                 '_timereported', '_timegenerated', '_timehmac', 'iut', 'trusted_comm', 'trusted_exe',
                  'trusted_cmdline', 'custom_fields', 'structured_data', '_tags', 'relp_id')
 
     def __init__(
-            self, procid='-', severity="", facility="", app_name="", source="", programname="",
-            syslogtag="", message="", uuid=None, hmac=None, timereported=None, timegenerated=None, timehmac=None, iut=1,
-            trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm="", trusted_exe="", trusted_cmdline="",
-            custom_fields=None, structured_data=None, tags=None
+            self, procid=u'-', severity=u'', facility=u'', app_name=u'', source=u'', programname=u'',
+            syslogtag=u'', message=u'', uuid=None, hmac=None, timereported=None, timegenerated=None, timehmac=None,
+            trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm=u'', trusted_exe=u'',
+            trusted_cmdline=u'', custom_fields=None, structured_data=None, tags=None, iut=1, **kwargs
     ):
 
         try:
@@ -168,29 +196,44 @@ class Event(object):
         except (ValueError, TypeError):
             self.trusted_pid = None
 
-        self.severity = severity
-        self.facility = facility
-        self.app_name = app_name
-        self.source = source
-        self.programname = programname
-        self.syslogtag = syslogtag
-        self.message = message.strip()
+        self.severity = to_unicode(severity)
+        self.facility = to_unicode(facility)
+        self.app_name = to_unicode(app_name)
+        self.source = to_unicode(source)
+        self.programname = to_unicode(programname)
+        self.syslogtag = to_unicode(syslogtag)
+        self.message = to_unicode(message.strip())
         self.uuid = uuid
         self.hmac = hmac
-        self.timereported = timereported
-        self.timegenerated = timegenerated
-        self.timehmac = timehmac
         self.iut = iut
-        self.trusted_comm = trusted_comm
-        self.trusted_exe = trusted_exe
-        self.trusted_cmdline = trusted_cmdline
+        self.trusted_comm = to_unicode(trusted_comm)
+        self.trusted_exe = to_unicode(trusted_exe)
+        self.trusted_cmdline = to_unicode(trusted_cmdline)
+
+        self._timereported = make_arrow_datetime(timereported)
+        self._timegenerated = make_arrow_datetime(timegenerated)
+        self._timehmac = make_arrow_datetime(timehmac)
+
         self.custom_fields = custom_fields if custom_fields else dict()
         self.structured_data = structured_data if structured_data else dict()
         self._tags = set(tags) if tags else set()
+
         self._parse_trusted()
         self._generate_uuid()
         self._generate_time()
         self.relp_id = None
+
+    @property
+    def timegenerated(self):
+        return None if self._timegenerated is None else self._timegenerated.datetime
+
+    @property
+    def timereported(self):
+        return None if self._timereported is None else self._timereported.datetime
+
+    @property
+    def timehmac(self):
+        return None if self._timehmac is None else self._timehmac.datetime
 
     def _generate_uuid(self):
         """
@@ -208,8 +251,8 @@ class Event(object):
         digest.update(self.app_name.encode("utf-8"))
         digest.update(self.source.encode("utf-8"))
         digest.update(self.message.encode("utf-8"))
-        if self.timereported is not None:
-            digest.update(str(Arrow.fromdatetime(self.timereported).to('utc')))
+        if self._timereported is not None:
+            digest.update(str(self._timereported.to('utc')))
         self.uuid = b64encode(digest.digest())
         return self.uuid
 
@@ -217,8 +260,8 @@ class Event(object):
         """
         If the event hasn't got a timegenerated field, give the current timestamp
         """
-        if self.timegenerated is None:
-            self.timegenerated = Arrow.utcnow().datetime
+        if self._timegenerated is None:
+            self._timegenerated = Arrow.utcnow()
 
     def __hash__(self):
         return hash(self.uuid)
@@ -237,7 +280,7 @@ class Event(object):
         """
         if self.uuid == other.uuid:
             return 0
-        return cmp(self.timegenerated, other.timegenerated)
+        return cmp(self._timegenerated, other.timegenerated)
 
     def _hmac(self):
         h = hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
@@ -247,10 +290,9 @@ class Event(object):
         h.update(self.app_name.encode("utf-8"))
         h.update(self.source.encode("utf-8"))
         h.update(self.message.encode("utf-8"))
-        if self.timereported is not None:
-            # take care of timezones...
-            h.update(str(Arrow.fromdatetime(self.timereported).to('utc')))
-        h.update(str(self.timehmac))
+        if self._timereported is not None:
+            h.update(str(self._timereported))
+        h.update(str(self._timehmac))
         return h
 
     def generate_hmac(self, verify=True):
@@ -264,7 +306,7 @@ class Event(object):
         if self.hmac and verify:
             self.verify_hmac()
             return
-        self.timehmac = Arrow.utcnow().datetime
+        self._timehmac = Arrow.utcnow()
         h = self._hmac()
         self.hmac = b64encode(h.finalize())
         return self.hmac
@@ -280,7 +322,7 @@ class Event(object):
         """
         if not self.hmac:
             raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC".format(self.uuid))
-        if not self.timehmac:
+        if not self._timehmac:
             raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC time".format(self.uuid))
         h = self._hmac()
         try:
@@ -303,7 +345,7 @@ class Event(object):
 
         :param tags: a tag (str) or a list of tags
         """
-        if isinstance(tags, past.builtins.basestring):
+        if isinstance(tags, basestr):
             self._tags.add(tags)
         else:
             self._tags.update(tags)
@@ -316,7 +358,7 @@ class Event(object):
         :param tags: a tag (str) or a list of tags
         """
 
-        if isinstance(tags, past.builtins.basestring):
+        if isinstance(tags, basestr):
             self._tags.remove(tags)
         else:
             self._tags.difference_update(tags)
@@ -388,41 +430,20 @@ class Event(object):
             self.message = match_obj.group(1).strip()
             s = match_obj.group(2).strip()
             trusted_fields_match = RE_TRUSTED_FIELDS.match(s)
-            if trusted_fields_match:
-                for f in trusted_fields_match.groupdict().values():
-                    if f is not None:
-                        try:
-                            f_name, f_content = f.split('=', 1)
-                        except (ValueError, AttributeError):
-                            pass
-                        else:
-                            f_name = to_unicode(f_name.strip())
-                            if f_name in TRUSTED_FIELDS_MAP:
-                                f_name = TRUSTED_FIELDS_MAP[f_name]
-                                self.__setattr__(f_name, f_content.strip(' "\''))
-
-    @classmethod
-    def _load_dictionnary(cls, d):
-        """
-        Parse a dictionnary into an Event
-
-        :param d: dictionnary
-        :return: Event
-        """
-        # workaround: marshmallow doesn't like 'None' objects
-        if d.get('timegenerated') is None:
-            d.pop('timegenerated', None)
-        if d.get('timereported') is None:
-            d.pop('timereported', None)
-        if d.get('timehmac') is None:
-            d.pop('timehmac', None)
-
-        # instantiate a dedicate schema object to avoid thread safety issues
-        schema = EventSchema()
-        try:
-            return schema.load(d).data
-        except UnmarshallingError as ex:
-            raise_from(ParsingError("Error when unmarshalling the event"), ex)
+            if not trusted_fields_match:
+                return
+            for f in trusted_fields_match.groupdict().values():
+                if f is None:
+                    continue
+                try:
+                    f_name, f_content = f.split('=', 1)
+                except (ValueError, AttributeError):
+                    pass
+                else:
+                    f_name = to_unicode(f_name.strip())
+                    if f_name in TRUSTED_FIELDS_MAP:
+                        f_name = TRUSTED_FIELDS_MAP[f_name]
+                        self.__setattr__(f_name, f_content.strip(' "\''))
 
     @classmethod
     def _load_syslog_rfc5424(cls, s):
@@ -457,7 +478,7 @@ class Event(object):
         if flds['STRUCTUREDDATA'] != '-':
             event_dict['structured_data'] = parse_structured_data(flds['STRUCTUREDDATA'])
 
-        return cls._load_dictionnary(event_dict)
+        return Event(**event_dict)
 
     @classmethod
     def _load_syslog_rfc3164(cls, s):
@@ -489,7 +510,7 @@ class Event(object):
         event_dict['programname'] = event_dict['app_name']
         event_dict['syslogtag'] = flds['SYSLOGTAG'].strip()
 
-        return cls._load_dictionnary(event_dict)
+        return Event(**event_dict)
 
     @classmethod
     def load(cls, s):
@@ -503,10 +524,8 @@ class Event(object):
         :raise `ParsingError`: if deserialization fails
         """
         if isinstance(s, dict):
-            return cls._load_dictionnary(s)
-        if isinstance(s, past.builtins.basestring):
-            s = to_unicode(s)
-
+            return Event(**s)
+        if isinstance(s, basestr):
             if REGEXP_START_SYSLOG23.match(s):
                 return cls._load_syslog_rfc5424(s)
             elif REGEXP_START_SYSLOG.match(s):
@@ -535,12 +554,13 @@ class Event(object):
         :raise ParsingError: if bytes could not be parsed correctly
         :raise InvalidSignature: if `hmac` is True and a HMAC already exists, but is invalid
         """
+        unicode_ev = to_unicode(bytes_ev)
         try:
             # optimization: if we're sure that the event is JSON, skip type detection tests
-            event = cls._load_json(bytes_ev) if json else cls.load(bytes_ev)
+            event = cls._load_json(unicode_ev) if json else cls.load(unicode_ev)
         except ParsingError:
             logger.warning(u"Could not unmarshall a syslog event")
-            logger.debug(to_unicode(bytes_ev))
+            logger.debug(to_unicode(unicode_ev))
             raise
         if hmac:
             # verify HMAC if the event has one, else generate a HMAC
@@ -557,7 +577,7 @@ class Event(object):
         except ValueError as ex:
             raise_from(ParsingError(u"Provided string was not JSON parsable", json=True), ex)
         else:
-            return cls._load_dictionnary(d)
+            return Event(**d)
 
     def dumps(self):
         # instantiate a dedicate schema object to avoid thread safety issues
@@ -582,9 +602,9 @@ class Event(object):
         d['tags'] = self.tags
         d['custom_fields'] = Json(self.custom_fields)
         d['structured_data'] = Json(self.structured_data)
-        d['timereported'] = self.timereported
-        d['timegenerated'] = self.timegenerated
-        d['timehmac'] = self.timehmac
+        d['timereported'] = self._timereported
+        d['timegenerated'] = self._timegenerated
+        d['timehmac'] = self._timehmac
         return cursor.mogrify(SQL_VALUES_STR, d)
 
     def str(self):
@@ -634,5 +654,6 @@ class Event(object):
         if merged_event.hmac:
             merged_event.generate_hmac(verify=False)
         # todo: merge structured data
+        # todo: merged severity should be maximum of severities
 
         return merged_event
