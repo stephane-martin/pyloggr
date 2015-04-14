@@ -10,52 +10,18 @@ __author__ = 'stef'
 from math import fabs
 
 from tornado.gen import coroutine, Return
-from tornado.concurrent import Future
 from spooky_hash import Hash128
 from arrow import Arrow
 
-from pyloggr.event import Event
+from . import BasePacker, Queue
 
 # merge events when they were emitted in "interval" ms
-interval_same_event = 250
+MERGE_EVENT_WINDOW = 250
 
-queue_max_age = 5000
-
-
-class Queue(list):
-    def __init__(self, publisher, exchange, routing_key, persistent):
-        super(Queue, self).__init__()
-        self.exchange = exchange
-        self.routing_key = routing_key
-        self.publisher = publisher
-        self.persistent = persistent
-        self.last_action = Arrow.utcnow()
-
-    @coroutine
-    def publish(self):
-        self.last_action = Arrow.utcnow()
-        l = len(self)
-        if l == 0:
-            return
-        elif l == 1:
-            merged_event = self[0]
-        else:
-            merged_event = Event.merge(self)
-        # publish the merged event
-        status, ev = yield self.publisher.publish_event(self.exchange, merged_event, self.routing_key, self.persistent)
-        # proclaim that all the events that are store in this queue have been published
-        for event in self:
-            event.have_been_published.set_result(status)
-        self[:] = []
-        self.last_action = Arrow.utcnow()
-
-    def append(self, event):
-        super(Queue, self).append(event)
-        event.have_been_published = Future()
-        self.last_action = Arrow.utcnow()
+PACKER_QUEUE_MAX_AGE = 5000
 
 
-class TimeBasedPacker(object):
+class TimeBasedPacker(BasePacker):
     """
     A time based packer merges several events if they came from the same source and were sent roughly at the same
     time.
@@ -65,10 +31,8 @@ class TimeBasedPacker(object):
         """
         :type publisher: pyloggr.rabbitmq.publisher.Publisher
         """
-        self.queues = dict()
-        self.publisher = publisher
+        super(TimeBasedPacker, self).__init__(publisher)
         self.flushing = False
-
 
     @coroutine
     def publish_event(self, exchange, event, routing_key='', persistent=True):
@@ -85,7 +49,7 @@ class TimeBasedPacker(object):
         :type persistent: bool
         """
 
-        if event.timereported is None:
+        if event._timereported is None:
             # we don't know when the event was emitted, so we just publish it
             status = yield self.publisher.publish_event(exchange, event, routing_key, persistent)
             raise Return((status, event))
@@ -108,9 +72,9 @@ class TimeBasedPacker(object):
             raise Return((status, event))
 
         first_event = queue[0]
-        diff = event.timereported - first_event.timereported
+        diff = event._timereported - first_event.timereported
         diff = fabs(diff.total_seconds()) * 1000
-        if diff >= interval_same_event:
+        if diff >= MERGE_EVENT_WINDOW:
             yield queue.publish()
 
         queue.append(event)
@@ -129,7 +93,7 @@ class TimeBasedPacker(object):
         publications = list()
         for queue in self.queues:
             age = fabs((now - queue.last_action).total_seconds()) * 1000
-            if age > queue_max_age and len(queue) > 0:
+            if age > PACKER_QUEUE_MAX_AGE and len(queue) > 0:
                 publications.append(queue.publish())
         if publications:
             yield publications
