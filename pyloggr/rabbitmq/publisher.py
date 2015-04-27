@@ -25,7 +25,7 @@ class Publisher(object):
     Publish messages in RabbitMQ
     """
 
-    def __init__(self, rabbitmq_config):
+    def __init__(self, rabbitmq_config, base_routing_key=u''):
         """
         :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
         """
@@ -40,6 +40,7 @@ class Publisher(object):
         self.connection = None
         self.channel = None
         self.connection_has_been_closed_event = None
+        self.base_routing_key = base_routing_key
 
         self._reset_counters()
         # IOLoop.instance().add_callback(self.connect)
@@ -115,7 +116,7 @@ class Publisher(object):
         raise Return(self.connection_has_been_closed_event)
 
     @coroutine
-    def publish(self, exchange, body, routing_key='', message_id=None, headers=None,
+    def publish(self, exchange, body, routing_key=u'', message_id=None, headers=None,
                 content_type="application/json", content_encoding="utf-8", persistent=True):
 
         """
@@ -177,28 +178,25 @@ class Publisher(object):
         )
 
         self._delivery_tag += 1
-        tag = self._delivery_tag
-        self.futures_ack[self._delivery_tag] = Future()
-        logger.debug("Publishing message: {}".format(tag))
+        current_tag = self._delivery_tag
+
+        self.futures_ack[current_tag] = Future()
+        logger.debug("Publishing message: {}".format(current_tag))
+        if not routing_key:
+            routing_key = self.base_routing_key
         self.channel.basic_publish(exchange, routing_key, body, publish_properties)
-        res = yield self.futures_ack[tag]
-        del self.futures_ack[tag]
+        res = yield self.futures_ack[current_tag]
+        del self.futures_ack[current_tag]
         raise Return(res)
 
     @coroutine
-    def publish_event(self, exchange, event, routing_key='', persistent=True):
+    def publish_event(self, event):
         """
         publish_event(exchange, event, routing_key='', persistent=True)
         Publish an Event object in RabbitMQ
 
-        :param exchange: RabbitMQ exchange
-        :type exchange: str
         :param event: Event object
         :type event: pyloggr.event.Event
-        :param routing_key: RabbitMQ routing key
-        :type routing_key: str
-        :param persistent: Should the event be saved on disk by RabbitMQ
-        :type persistent: bool
 
         Note
         ====
@@ -207,11 +205,11 @@ class Publisher(object):
         json_event = event.dumps()
         # publish the event in RabbitMQ in JSON format
         result = yield self.publish(
-            exchange=exchange,
+            exchange=self.rabbitmq_config.exchange,
             body=json_event,
-            routing_key=routing_key,
+            routing_key=self.base_routing_key,
             message_id=event.uuid,
-            persistent=persistent
+            persistent=True
         )
         raise Return((result, event))
 
