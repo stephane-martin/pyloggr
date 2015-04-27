@@ -86,41 +86,62 @@ Structured      {0.structured_data}
 """
 
 FACILITY = {
-    0:              'kern',
-    1:              'user',
-    2:              'mail',
-    3:              'daemon',
-    4:              'auth',
-    5:              'syslog',
-    6:              'lpr',
-    7:              'news',
-    8:              'uucp',
-    9:              'clock',
-    10:             'authpriv',
-    11:             'ftp',
-    12:             'ntp',
-    13:             'audit',
-    14:             'alert',
-    15:             'cron',
-    16:             'local0',
-    17:             'local1',
-    18:             'local2',
-    19:             'local3',
-    20:             'local4',
-    21:             'local5',
-    22:             'local6',
-    23:             'local7'
+    0:              u'kern',
+    1:              u'user',
+    2:              u'mail',
+    3:              u'daemon',
+    4:              u'auth',
+    5:              u'syslog',
+    6:              u'lpr',
+    7:              u'news',
+    8:              u'uucp',
+    9:              u'clock',
+    10:             u'authpriv',
+    11:             u'ftp',
+    12:             u'ntp',
+    13:             u'audit',
+    14:             u'alert',
+    15:             u'cron',
+    16:             u'local0',
+    17:             u'local1',
+    18:             u'local2',
+    19:             u'local3',
+    20:             u'local4',
+    21:             u'local5',
+    22:             u'local6',
+    23:             u'local7',
+    u'kernel':      u'kern'
 }
 
+
+#TODO: complete list of severities
 SEVERITY = {
-    0:  'emerg',
-    1:  'alert',
-    2:  'crit',
-    3:  'err',
-    4:  'warning',
-    5:  'notice',
-    6:  'info',
-    7:  'debug'
+    0:  u'emerg',
+    1:  u'alert',
+    2:  u'crit',
+    3:  u'err',
+    4:  u'warning',
+    5:  u'notice',
+    6:  u'info',
+    7:  u'debug',
+    u'note': u'notice',
+    u'warning': u'warning',
+    u'warn': u'warning',
+    u'error': u'err',
+    u'info': u'info',
+    u'critical': u'crit',
+    u'emergency': u'emerg'
+}
+
+SEVERITY_TO_INT = {
+    u'emerg': 0,
+    u'alert': 1,
+    u'crit': 2,
+    u'err': 3,
+    u'warning': 4,
+    u'notice': 5,
+    u'info': 6,
+    u'debug': 7
 }
 
 
