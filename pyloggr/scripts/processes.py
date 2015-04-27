@@ -14,21 +14,20 @@ from pyloggr.main.event_parser import EventParser
 from pyloggr.main.shipper2pgsql import PostgresqlShipper
 from pyloggr.main.web_frontend import WebServer
 from pyloggr.main.harvest import Harvest
+from pyloggr.config import Config
 
 
 class SyslogProcess(PyloggrProcess):
     def __init__(self, name):
         PyloggrProcess.__init__(self, name=name, fork=True)
-        from pyloggr.config import SYSLOG
-        self.syslog_config = SyslogParameters(SYSLOG)
+        self.syslog_config = SyslogParameters(Config.SYSLOG)
         self.syslog_config.bind_all_sockets()
 
     @coroutine
     def launch(self):
-        from pyloggr.config import SYSLOG_PUBLISHER
         self.pyloggr_process = SyslogServer(
-            rabbitmq_config=SYSLOG_PUBLISHER,
-            syslog_config=self.syslog_config,
+            rabbitmq_config=Config.SYSLOG_PUBLISHER,
+            syslog_parameters=self.syslog_config,
             server_id=self.task_id
         )
         self.logger.info("Starting {}".format(self.name))
@@ -37,12 +36,12 @@ class SyslogProcess(PyloggrProcess):
 
 class ParserProcess(PyloggrProcess):
     def __init__(self, name):
-        from pyloggr.config import PARSER_CONSUMER, PARSER_PUBLISHER
         PyloggrProcess.__init__(self, name=name, fork=True)
         self.pyloggr_process = EventParser(
-            from_rabbitmq_config=PARSER_CONSUMER,
-            to_rabbitmq_config=PARSER_PUBLISHER
+            from_rabbitmq_config=Config.PARSER_CONSUMER,
+            to_rabbitmq_config=Config.PARSER_PUBLISHER
         )
+
     @coroutine
     def launch(self):
         self.logger.info("Starting {}".format(self.name))
@@ -55,8 +54,7 @@ class PgSQLShipperProcess(PyloggrProcess):
 
     @coroutine
     def launch(self):
-        from pyloggr.config import PGSQL_CONSUMER, POSTGRESQL
-        self.pyloggr_process = PostgresqlShipper(PGSQL_CONSUMER, POSTGRESQL)
+        self.pyloggr_process = PostgresqlShipper(Config.PGSQL_CONSUMER, Config.POSTGRESQL)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
 
@@ -78,7 +76,6 @@ class HarvestProcess(PyloggrProcess):
 
     @coroutine
     def launch(self):
-        from pyloggr.config import HARVEST
-        self.pyloggr_process = Harvest(HARVEST)
+        self.pyloggr_process = Harvest(Config.HARVEST)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
