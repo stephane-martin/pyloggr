@@ -21,6 +21,7 @@ from tornado.gen import coroutine
 from argh.helpers import ArghParser
 from argh.exceptions import CommandError
 from pyloggr.utils import ask_question
+from pyloggr.config import Config, set_configuration, set_logging
 
 
 def set_config_env(config_dir):
@@ -41,16 +42,16 @@ def set_config_env(config_dir):
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not exists(config_env):
         raise CommandError("Config directory '{}' doesn't exists".format(config_env))
+    set_configuration(config_env)
 
 
 def check_pid(name):
-    from pyloggr.config import PIDS_DIRECTORY
-    if not exists(PIDS_DIRECTORY):
+    if not exists(Config.PIDS_DIRECTORY):
         try:
-            os.makedirs(PIDS_DIRECTORY)
+            os.makedirs(Config.PIDS_DIRECTORY)
         except OSError:
-            raise CommandError("PID directory '{}' is not writable".format(PIDS_DIRECTORY))
-    pid_file = join(PIDS_DIRECTORY, name + u".pid")
+            raise CommandError("PID directory '{}' is not writable".format(Config.PIDS_DIRECTORY))
+    pid_file = join(Config.PIDS_DIRECTORY, name + u".pid")
     if exists(pid_file):
         try:
             with open(pid_file) as f:
@@ -71,19 +72,20 @@ def check_pid(name):
 
 
 def _run(process):
-    from pyloggr.config import PIDS_DIRECTORY
     from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, ParserProcess, PgSQLShipperProcess
     from pyloggr.scripts.processes import HarvestProcess
-    from pyloggr.config import set_logging, LOGGING_FILES
     from pyloggr.utils import remove_pid_file
-    pid_file = join(PIDS_DIRECTORY, process + u".pid")
+    pid_file = join(Config.PIDS_DIRECTORY, process + u".pid")
     try:
         with open(pid_file, 'w') as f:
             f.write(text(os.getpid()))
     except OSError:
         raise CommandError("Error trying to write PID file '{}'".format(pid_file))
     try:
-        set_logging(getattr(LOGGING_FILES, process))
+        set_logging(
+            filename=getattr(Config.LOGGING_FILES, process),
+            level=Config.LOGGING_FILES.level
+        )
         dispatcher = {
             'frontend': FrontendProcess,
             'syslog': SyslogProcess,
@@ -218,39 +220,38 @@ def init_db(config_dir=None):
     The PostgreSQL user and database should have been manually created by the admin before
     """
     set_config_env(config_dir)
-    from pyloggr.config import POSTGRESQL
     import psycopg2
     try:
-        psycopg2.connect(POSTGRESQL.DSN)
+        psycopg2.connect(Config.POSTGRESQL.DSN)
     except psycopg2.Error:
         raise CommandError(
             "Impossible to connect to PGSQL. Check that you have created the user and the database"
         )
 
-    with psycopg2.connect(POSTGRESQL.DSN) as conn:
+    with psycopg2.connect(Config.POSTGRESQL.DSN) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT schemaname, tablename FROM pg_tables WHERE schemaname='public';")
             tables = [c[0] + '.' + c[1] for c in cur.fetchall()]
 
-        if POSTGRESQL.tablename in tables:
+        if Config.POSTGRESQL.tablename in tables:
             answer = ask_question("Table '{}' already exists. Do you want to delete and create it "
-                                  "again ? (y/N)".format(POSTGRESQL.tablename))
+                                  "again ? (y/N)".format(Config.POSTGRESQL.tablename))
             if not answer:
                 return
             with conn.cursor() as cur:
-                cur.execute("DROP TABLE {};".format(POSTGRESQL.tablename))
+                cur.execute("DROP TABLE {};".format(Config.POSTGRESQL.tablename))
 
     sql_fname = join(os.environ['PYLOGGR_CONFIG_DIR'], '3rd_party', 'postgresql', 'table.sql')
     with open(sql_fname, encoding='utf-8') as f:
-        sql = f.read().replace('XXXXXXXX', POSTGRESQL.tablename)
+        sql = f.read().replace('XXXXXXXX', Config.POSTGRESQL.tablename)
     try:
-        with psycopg2.connect(POSTGRESQL.DSN) as conn:
+        with psycopg2.connect(Config.POSTGRESQL.DSN) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
     except psycopg2.Error:
-        print("Error happened when creating '{}'".format(POSTGRESQL.tablename), file=sys.stderr)
+        print("Error happened when creating '{}'".format(Config.POSTGRESQL.tablename), file=sys.stderr)
     else:
-        print("Table '{}' was created".format(POSTGRESQL.tablename))
+        print("Table '{}' was created".format(Config.POSTGRESQL.tablename))
 
 
 def purge_db(config_dir=None):
@@ -261,12 +262,11 @@ def purge_db(config_dir=None):
     answer = ask_question("Are you sure you want to empty the PGSQL db ? (y/N)")
     if not answer:
         return
-    from pyloggr.config import POSTGRESQL
     import psycopg2
-    with psycopg2.connect(POSTGRESQL.DSN) as conn:
+    with psycopg2.connect(Config.POSTGRESQL.DSN) as conn:
         with conn.cursor() as cur:
             try:
-                cur.execute("DELETE FROM {};".format(POSTGRESQL.tablename))
+                cur.execute("DELETE FROM {};".format(Config.POSTGRESQL.tablename))
             except psycopg2.Error as ex:
                 print("Error happened during purge:", str(ex), file=sys.stderr)
             else:
@@ -281,14 +281,13 @@ def purge_queues(config_dir=None):
     answer = ask_question("Are you sure you want to empty the RabbitMQ queues ? (y/N)")
     if not answer:
         return
-    from pyloggr.config import NOTIFICATIONS, PARSER_CONSUMER, PGSQL_CONSUMER
     from pyloggr.rabbitmq.management import Client
 
     @coroutine
     def purge():
-        client = Client(NOTIFICATIONS.host, NOTIFICATIONS.user, NOTIFICATIONS.password)
-        yield client.purge_queue(NOTIFICATIONS.vhost, PARSER_CONSUMER.queue)
-        yield client.purge_queue(NOTIFICATIONS.vhost, PGSQL_CONSUMER.queue)
+        client = Client(Config.NOTIFICATIONS.host, Config.NOTIFICATIONS.user, Config.NOTIFICATIONS.password)
+        yield client.purge_queue(Config.NOTIFICATIONS.vhost, Config.PARSER_CONSUMER.queue)
+        yield client.purge_queue(Config.NOTIFICATIONS.vhost, Config.PGSQL_CONSUMER.queue)
 
     try:
         IOLoop.instance().run_sync(purge)
@@ -307,24 +306,19 @@ def init_rabbitmq(config_dir=None):
     If an exchange or queue already exists, we silently pass
     """
     set_config_env(config_dir)
-    from pyloggr.config import NOTIFICATIONS, PARSER_CONSUMER, PGSQL_CONSUMER
-    from pyloggr.config import PARSER_PUBLISHER, SYSLOG_PUBLISHER
     from pyloggr.rabbitmq.management import Client, HTTPError
-
-
 
     @coroutine
     def init_rabbit():
-        client = Client(NOTIFICATIONS.host, NOTIFICATIONS.user, NOTIFICATIONS.password)
+        client = Client(Config.NOTIFICATIONS.host, Config.NOTIFICATIONS.user, Config.NOTIFICATIONS.password)
         create_parser_queue = False
         create_pgsql_queue = False
         create_syslog_exchange = False
         create_parser_exchange = False
         create_notifications_exchange = False
 
-
         try:
-            yield client.get_queue(PARSER_CONSUMER.vhost, PARSER_CONSUMER.queue)
+            yield client.get_queue(Config.PARSER_CONSUMER.vhost, Config.PARSER_CONSUMER.queue)
         except HTTPError as ex:
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
@@ -335,7 +329,7 @@ def init_rabbitmq(config_dir=None):
             print("PARSER_CONSUMER queue already exists", file=sys.stderr)
 
         try:
-            yield client.get_queue(PGSQL_CONSUMER.vhost, PGSQL_CONSUMER.queue)
+            yield client.get_queue(Config.PGSQL_CONSUMER.vhost, Config.PGSQL_CONSUMER.queue)
         except HTTPError as ex:
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
@@ -345,9 +339,8 @@ def init_rabbitmq(config_dir=None):
         else:
             print("PGSQL_CONSUMER queue already exists", file=sys.stderr)
 
-
         try:
-            yield client.get_exchange(SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange)
+            yield client.get_exchange(Config.SYSLOG_PUBLISHER.vhost, Config.SYSLOG_PUBLISHER.exchange)
         except HTTPError as ex:
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
@@ -358,7 +351,7 @@ def init_rabbitmq(config_dir=None):
             print("SYSLOG_PUBLISHER exchange already exists", file=sys.stderr)
 
         try:
-            yield client.get_exchange(PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange)
+            yield client.get_exchange(Config.PARSER_PUBLISHER.vhost, Config.PARSER_PUBLISHER.exchange)
         except HTTPError as ex:
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
@@ -369,7 +362,7 @@ def init_rabbitmq(config_dir=None):
             print("PARSER_PUBLISHER exchange already exists", file=sys.stderr)
 
         try:
-            yield client.get_exchange(NOTIFICATIONS.vhost, NOTIFICATIONS.exchange)
+            yield client.get_exchange(Config.NOTIFICATIONS.vhost, Config.NOTIFICATIONS.exchange)
         except HTTPError as ex:
             if ex.status != 404:
                 print("Error happened when querying RabbitMQ management API", file=sys.stderr)
@@ -381,80 +374,92 @@ def init_rabbitmq(config_dir=None):
 
         if create_parser_queue:
             try:
-                yield client.create_queue(PARSER_CONSUMER.vhost, PARSER_CONSUMER.queue,
+                yield client.create_queue(Config.PARSER_CONSUMER.vhost, Config.PARSER_CONSUMER.queue,
                                           durable=True, auto_delete=False)
             except Exception:
-                print("Error while creating queue '{}'".format(PARSER_CONSUMER.queue), file=sys.stderr)
+                print("Error while creating queue '{}'".format(Config.PARSER_CONSUMER.queue), file=sys.stderr)
                 raise
             else:
-                print("Queue '{}' was created".format(PARSER_CONSUMER.queue))
+                print("Queue '{}' was created".format(Config.PARSER_CONSUMER.queue))
 
         if create_pgsql_queue:
             try:
-                yield client.create_queue(PGSQL_CONSUMER.vhost, PGSQL_CONSUMER.queue,
+                yield client.create_queue(Config.PGSQL_CONSUMER.vhost, Config.PGSQL_CONSUMER.queue,
                                           durable=True, auto_delete=False)
             except Exception:
-                print("Error while creating queue '{}'".format(PGSQL_CONSUMER.queue), file=sys.stderr)
+                print("Error while creating queue '{}'".format(Config.PGSQL_CONSUMER.queue), file=sys.stderr)
                 raise
             else:
-                print("Queue '{}' was created".format(PGSQL_CONSUMER.queue))
+                print("Queue '{}' was created".format(Config.PGSQL_CONSUMER.queue))
 
         if create_syslog_exchange:
             try:
                 yield client.create_exchange(
-                    SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, 'topic', durable=True, auto_delete=False
+                    Config.SYSLOG_PUBLISHER.vhost, Config.SYSLOG_PUBLISHER.exchange, 'topic', durable=True,
+                    auto_delete=False
                 )
             except Exception:
-                print("Error while creating exchange '{}'".format(SYSLOG_PUBLISHER.exchange), file=sys.stderr)
+                print(
+                    "Error while creating exchange '{}'".format(Config.SYSLOG_PUBLISHER.exchange),
+                    file=sys.stderr
+                )
                 raise
             else:
-                print("Exchange '{}' was created".format(SYSLOG_PUBLISHER.exchange))
+                print("Exchange '{}' was created".format(Config.SYSLOG_PUBLISHER.exchange))
 
         if create_parser_exchange:
             try:
                 yield client.create_exchange(
-                    PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, 'fanout', durable=True, auto_delete=False
+                    Config.PARSER_PUBLISHER.vhost, Config.PARSER_PUBLISHER.exchange, 'fanout',
+                    durable=True, auto_delete=False
                 )
             except Exception:
-                print("Error while creating exchange '{}'".format(PARSER_PUBLISHER.exchange), file=sys.stderr)
+                print("Error while creating exchange '{}'".format(Config.PARSER_PUBLISHER.exchange),
+                      file=sys.stderr)
                 raise
             else:
-                print("Exchange '{}' was created".format(PARSER_PUBLISHER.exchange))
+                print("Exchange '{}' was created".format(Config.PARSER_PUBLISHER.exchange))
 
         if create_notifications_exchange:
             try:
                 yield client.create_exchange(
-                    NOTIFICATIONS.vhost, NOTIFICATIONS.exchange, 'topic', durable=True, auto_delete=False
+                    Config.NOTIFICATIONS.vhost, Config.NOTIFICATIONS.exchange, 'topic', durable=True,
+                    auto_delete=False
                 )
             except Exception:
-                print("Error while creating exchange '{}'".format(NOTIFICATIONS.exchange), file=sys.stderr)
+                print("Error while creating exchange '{}'".format(Config.NOTIFICATIONS.exchange), file=sys.stderr)
                 raise
             else:
-                print("Exchange '{}' was created".format(NOTIFICATIONS.exchange))
+                print("Exchange '{}' was created".format(Config.NOTIFICATIONS.exchange))
 
         if create_syslog_exchange or create_parser_queue:
             try:
                 yield client.create_binding(
-                    SYSLOG_PUBLISHER.vhost, SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue, 'pyloggr.syslog.*'
+                    Config.SYSLOG_PUBLISHER.vhost, Config.SYSLOG_PUBLISHER.exchange,
+                    Config.PARSER_CONSUMER.queue, 'pyloggr.syslog.*'
                 )
             except Exception:
                 print("Error while creating binding '{} -> {}'".format(
-                    SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue), file=sys.stderr)
+                    Config.SYSLOG_PUBLISHER.exchange, Config.PARSER_CONSUMER.queue), file=sys.stderr)
                 raise
             else:
-                print("Created binding '{} -> {}'".format(SYSLOG_PUBLISHER.exchange, PARSER_CONSUMER.queue))
+                print("Created binding '{} -> {}'".format(
+                    Config.SYSLOG_PUBLISHER.exchange, Config.PARSER_CONSUMER.queue
+                ))
 
         if create_parser_exchange or create_pgsql_queue:
             try:
                 yield client.create_binding(
-                    PARSER_PUBLISHER.vhost, PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue
+                    Config.PARSER_PUBLISHER.vhost, Config.PARSER_PUBLISHER.exchange, Config.PGSQL_CONSUMER.queue
                 )
             except Exception:
                 print("Error while creating binding '{} -> {}'".format(
-                    PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue), file=sys.stderr)
+                    Config.PARSER_PUBLISHER.exchange, Config.PGSQL_CONSUMER.queue), file=sys.stderr)
                 raise
             else:
-                print("Created binding '{} -> {}'".format(PARSER_PUBLISHER.exchange, PGSQL_CONSUMER.queue))
+                print("Created binding '{} -> {}'".format(
+                    Config.PARSER_PUBLISHER.exchange, Config.PGSQL_CONSUMER.queue
+                ))
 
     IOLoop.instance().run_sync(init_rabbit)
 
@@ -471,19 +476,17 @@ def status(config_dir=None):
     from pyloggr.cache import cache
     cache.initialize()
     print("Redis is running" if cache.available else "Redis is not running")
-    from pyloggr.config import NOTIFICATIONS
     from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
-    publisher = Publisher(NOTIFICATIONS)
+    publisher = Publisher(Config.NOTIFICATIONS)
     try:
         IOLoop.instance().run_sync(publisher.start)
     except RabbitMQConnectionError as ex:
         print("Can't connect to RabbitMQ: " + str(ex))
     else:
         print("Connected to RabbitMQ")
-    from pyloggr.config import POSTGRESQL
     from psycopg2 import connect, DatabaseError
     try:
-        connect(POSTGRESQL.DSN).cursor().execute("SELECT 1;")
+        connect(Config.POSTGRESQL.DSN).cursor().execute("SELECT 1;")
     except DatabaseError as ex:
         print("Can't connect to PGSQL: {}".format(str(ex)))
     else:
