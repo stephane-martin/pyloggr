@@ -11,8 +11,8 @@ from ..rabbitmq import RabbitMQConnectionError
 from ..rabbitmq.publisher import Publisher
 from ..rabbitmq.consumer import Consumer
 from pyloggr.filters import DropException, Filters
-from ..event import Event, ParsingError, InvalidSignature
-from ..config import SLEEP_TIME, CONFIG_DIR
+from pyloggr.event import Event, ParsingError, InvalidSignature
+from pyloggr.config import Config
 from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class EventParser(object):
         self.publisher = None
         self.shutting_down = None
         self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config.qos + 5)
-        self.filters = Filters(CONFIG_DIR)
+        self.filters = Filters(Config.CONFIG_DIR)
         self.filters.open()
 
     @coroutine
@@ -55,7 +55,7 @@ class EventParser(object):
             closed_publisher_event = yield self.publisher.start()
         except RabbitMQConnectionError:
             logger.warning("Can't connect to publisher")
-            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
+            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(Config.SLEEP_TIME))
             yield self.stop()
             yield sleep(60)
             if not self.shutting_down:
@@ -76,7 +76,7 @@ class EventParser(object):
             closed_connection_event = yield self.consumer.start(self.from_rabbitmq_config.qos)
         except RabbitMQConnectionError:
             logger.warning("Can't connect to consumer")
-            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
+            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(Config.SLEEP_TIME))
             # self.stop() stops the publisher too. so closed_publisher_event.wait() inside launch will return
             yield self.stop()
             return
@@ -98,12 +98,10 @@ class EventParser(object):
     def _publish(self, future):
         message, ev = future.result()
         if ev is None:
+            # dropped event
             message.ack()
             return
-        res = yield self.publisher.publish(
-            exchange=self.to_rabbitmq_config.exchange,
-            body=ev.dumps()
-        )
+        res, _ = yield self.publisher.publish_event(ev)
         if res:
             message.ack()
         else:

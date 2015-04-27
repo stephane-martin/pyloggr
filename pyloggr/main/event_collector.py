@@ -118,9 +118,7 @@ class EventCollector(object):
                 logger.debug("Rescue queue: dropping one unparsable event")
                 continue
 
-            publish_futures[bytes_event] = self.publisher.publish_event(
-                self.rabbitmq_config.exchange, event, 'pyloggr.syslog.0'
-            )
+            publish_futures[bytes_event] = self.publisher.publish_event(event)
 
         results = yield publish_futures
         failed_events = [bytes_event for (bytes_event, ack) in results.items() if not ack]

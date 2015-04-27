@@ -21,17 +21,10 @@ from ..rabbitmq import management
 from ..rabbitmq.notifications_consumer import NotificationsConsumer
 from ..rabbitmq import RabbitMQConnectionError
 from ..utils.observable import Observable, Observer
-from ..config import NOTIFICATIONS, RABBITMQ_HTTP
-from ..config import PARSER_CONSUMER, PGSQL_CONSUMER
-from ..config import POSTGRESQL, COOKIE_SECRET
-from ..cache import cache
+from pyloggr.config import Config
+from pyloggr.cache import cache
 from pyloggr.utils import sleep
 
-
-DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
-    POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password, POSTGRESQL.host, POSTGRESQL.port,
-    POSTGRESQL.connect_timeout
-)
 
 logger = logging.getLogger(__name__)
 PERIODIC_RABBIT_STATUS_TIME = 10 * 1000
@@ -213,7 +206,7 @@ class PyloggrApplication(Application):
             'debug': True,
             'static_path': resource_filename('pyloggr', '/static'),
             'static_url_prefix': url_prefix + '/static/',
-            'cookie_secret': COOKIE_SECRET
+            'cookie_secret': Config.COOKIE_SECRET
         }
 
         template_loader = PackageLoader('pyloggr', 'templates')
@@ -308,8 +301,8 @@ class PgSQLStats(Observable):
         db_conn = None
         stats = None
         try:
-            db_conn = yield momoko.Op(momoko.Connection().connect, DSN)
-            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(POSTGRESQL.tablename))
+            db_conn = yield momoko.Op(momoko.Connection().connect, Config.POSTGRESQL.DSN)
+            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(Config.POSTGRESQL.tablename))
             stats = cursor.fetchone()[0]
         except psycopg2.Error:
             logger.exception("Database seems down")
@@ -337,7 +330,7 @@ class RabbitMQStats(Observable):
     """
     Gather information from RabbitMQ management API
     """
-    queue_names = [PARSER_CONSUMER.queue, PGSQL_CONSUMER.queue]
+    queue_names = [Config.PARSER_CONSUMER.queue, Config.PGSQL_CONSUMER.queue]
 
     def __init__(self):
         Observable.__init__(self)
@@ -345,9 +338,9 @@ class RabbitMQStats(Observable):
         self._updating = False
 
         self._rabbitmq_api_client = management.Client(
-            host=RABBITMQ_HTTP,
-            user=NOTIFICATIONS.user,
-            passwd=NOTIFICATIONS.password,
+            host=Config.RABBITMQ_HTTP,
+            user=Config.NOTIFICATIONS.user,
+            passwd=Config.NOTIFICATIONS.password,
             timeout=13
         )
 
@@ -360,7 +353,7 @@ class RabbitMQStats(Observable):
         results = dict()
         try:
             for name in self.queue_names:
-                results[name] = yield self._rabbitmq_api_client.get_queue(NOTIFICATIONS.vhost, name)
+                results[name] = yield self._rabbitmq_api_client.get_queue(Config.NOTIFICATIONS.vhost, name)
         except management.NetworkError:
             logger.warning("RabbitMQ management API does not seem available")
             status.rabbitmq = False
@@ -392,5 +385,4 @@ status = Status()
 rabbitmq_stats = RabbitMQStats()
 pgsql_stats = PgSQLStats()
 syslog_servers = None
-notifications_consumer = NotificationsConsumer(NOTIFICATIONS, 'pyloggr.*.*')
-
+notifications_consumer = NotificationsConsumer(Config.NOTIFICATIONS, 'pyloggr.*.*')

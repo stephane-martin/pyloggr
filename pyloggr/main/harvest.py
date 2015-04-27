@@ -106,7 +106,6 @@ class Harvest(object):
         # try to parse fname for logs
         print "***", fname
 
-
     @coroutine
     def on_moved(self, event):
         """
