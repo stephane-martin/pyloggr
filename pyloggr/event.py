@@ -11,8 +11,6 @@ __author__ = 'stef'
 
 import logging
 from base64 import b64encode, b64decode
-from copy import copy
-from itertools import chain
 
 import ujson
 from arrow import Arrow
@@ -21,7 +19,6 @@ import arrow.parser
 import dateutil.parser
 from datetime import datetime
 from marshmallow import Schema, fields
-from marshmallow.exceptions import UnmarshallingError
 from future.utils import python_2_unicode_compatible, raise_from
 # noinspection PyPackageRequirements
 from past.builtins import basestring as basestr
@@ -32,14 +29,12 @@ from cryptography.exceptions import InvalidSignature
 from psycopg2.extras import Json
 from spooky_hash import Hash128
 
-from .utils.structured_data import parse_structured_data
-from .utils.fix_unicode import to_unicode
+from pyloggr.utils.structured_data import parse_structured_data
+from pyloggr.utils import to_unicode
 from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
 from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
-from .config import HMAC_KEY
 
 logger = logging.getLogger(__name__)
-hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
 
 
 class ParsingError(ValueError):
@@ -113,27 +108,15 @@ def handle_numeric(serializer, data, o):
     return data
 
 
-def make_arrow_datetime(dt):
-    if dt is None:
-        return None
-    if isinstance(dt, Arrow):
-        return dt
-    if isinstance(dt, datetime):
-        return Arrow.fromdatetime(dt).to('utc')
-    if isinstance(dt, basestr):
-        try:
-            return arrow.get(dt)
-        except arrow.parser.ParserError:
-            try:
-                return Arrow.fromdatetime(dateutil.parser.parse(dt)).to('utc')
-            except ValueError:
-                return None
-
+SEVERITY_VALUES = SEVERITY.values()
+FACILITY_VALUES = FACILITY.values()
 
 # todo: make severity, facility, app_name, source, message read_only
 
+
 @python_2_unicode_compatible
 class Event(object):
+    HMAC_KEY = None
     """
     Represents a syslog event, with optional tags, custom fields and structured data
 
@@ -167,7 +150,60 @@ class Event(object):
     __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', 'severity', 'facility',
                  'app_name', 'source', 'programname', 'syslogtag', 'message', 'uuid', 'hmac',
                  '_timereported', '_timegenerated', '_timehmac', 'iut', 'trusted_comm', 'trusted_exe',
-                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags', 'relp_id')
+                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags', 'relp_id',
+                 'have_been_published')
+
+    @staticmethod
+    def make_severity(severity):
+        if severity is None:
+            return u''
+        try:
+            # from encoded priority
+            return SEVERITY.get(int(severity) & 7, u'')
+        except ValueError:
+            pass
+        severity = to_unicode(severity)
+        if severity in SEVERITY_VALUES:
+            return severity
+        return SEVERITY.get(severity.lower(), u'')
+
+    @staticmethod
+    def make_facility(facility):
+        if facility is None:
+            return u''
+        try:
+            # from encoded priority
+            return FACILITY.get(int(facility) >> 3, u'')
+        except ValueError:
+            pass
+        facility = to_unicode(facility)
+        if facility in FACILITY_VALUES:
+            return facility
+        return SEVERITY.get(facility.lower(), u'')
+
+    @staticmethod
+    def make_arrow_datetime(dt):
+        if dt is None:
+            return None
+        if isinstance(dt, Arrow):
+            return dt
+        if isinstance(dt, datetime):
+            return Arrow.fromdatetime(dt).to('utc')
+        if isinstance(dt, basestr):
+            # sometimes microseconds are delimited with a comma
+            dt = dt.replace(',', '.')
+            try:
+                # ISO format
+                return arrow.get(dt)
+            except arrow.parser.ParserError:
+                try:
+                    return arrow.get(dt, "YYMMDD HH:mm:ss")
+                except arrow.parser.ParserError:
+                    try:
+                        # fallback to dateutil parser
+                        return Arrow.fromdatetime(dateutil.parser.parse(dt)).to('utc')
+                    except ValueError:
+                        return None
 
     def __init__(
             self, procid=u'-', severity=u'', facility=u'', app_name=u'', source=u'', programname=u'',
@@ -196,8 +232,8 @@ class Event(object):
         except (ValueError, TypeError):
             self.trusted_pid = None
 
-        self.severity = to_unicode(severity)
-        self.facility = to_unicode(facility)
+        self.severity = self.make_severity(severity)
+        self.facility = self.make_facility(facility)
         self.app_name = to_unicode(app_name)
         self.source = to_unicode(source)
         self.programname = to_unicode(programname)
@@ -210,16 +246,16 @@ class Event(object):
         self.trusted_exe = to_unicode(trusted_exe)
         self.trusted_cmdline = to_unicode(trusted_cmdline)
 
-        self._timereported = make_arrow_datetime(timereported)
-        self._timegenerated = make_arrow_datetime(timegenerated)
-        self._timehmac = make_arrow_datetime(timehmac)
+        self._timereported = self.make_arrow_datetime(timereported)
+        self._timegenerated = self.make_arrow_datetime(timegenerated)
+        self._timehmac = self.make_arrow_datetime(timehmac)
 
         self.custom_fields = custom_fields if custom_fields else dict()
         self.structured_data = structured_data if structured_data else dict()
         self._tags = set(tags) if tags else set()
 
         self._parse_trusted()
-        self._generate_uuid()
+        self.generate_uuid()
         self._generate_time()
         self.relp_id = None
 
@@ -235,13 +271,13 @@ class Event(object):
     def timehmac(self):
         return None if self._timehmac is None else self._timehmac.datetime
 
-    def _generate_uuid(self):
+    def generate_uuid(self, overwrite=False):
         """
         Generate a UUID for the current event, if it hasn't got one before
 
         :rtype: str
         """
-        if self.uuid:
+        if self.uuid and not overwrite:
             logger.debug("Event already has an UUID: {}".format(self.uuid))
             return
         digest = Hash128()
@@ -283,7 +319,7 @@ class Event(object):
         return cmp(self._timegenerated, other.timegenerated)
 
     def _hmac(self):
-        h = hmac_func.HMAC(HMAC_KEY, hashes.SHA256(), backend=default_backend())
+        h = hmac_func.HMAC(self.HMAC_KEY, hashes.SHA256(), backend=default_backend())
         # HMAC doesn't accept unicode
         h.update(self.severity.encode("utf-8"))
         h.update(self.facility.encode("utf-8"))
@@ -421,7 +457,7 @@ class Event(object):
 
     def _parse_trusted(self):
         """
-        Parse the "trusted fields" that rsyslog could have generated
+        Parse the "trusted fields" that rsyslog could generate
         """
         # ex: @[_PID=5096 _UID=0 _GID=1000 _COMM=sudo test _EXE=/usr/bin/sudo test _CMDLINE="sudo test ls "]
 
@@ -458,8 +494,8 @@ class Event(object):
             raise ParsingError("Event is not a SYSLOG23 string")
         flds = match_obj.groupdict()
         event_dict = dict()
-        event_dict['facility'] = FACILITY.get(int(flds['PRI']) >> 3, None)
-        event_dict['severity'] = SEVERITY.get(int(flds['PRI']) & 7, None)
+        event_dict['facility'] = int(flds['PRI'])
+        event_dict['severity'] = int(flds['PRI'])
         event_dict['source'] = flds['HOSTNAME']
         event_dict['app_name'] = flds['APPNAME']
         event_dict['programname'] = flds['APPNAME']
@@ -493,8 +529,8 @@ class Event(object):
             raise ParsingError("Event is not a SYSLOG string")
         flds = match_obj.groupdict()
         event_dict = dict()
-        event_dict['facility'] = FACILITY.get(int(flds['PRI']) >> 3, None)
-        event_dict['severity'] = SEVERITY.get(int(flds['PRI']) & 7, None)
+        event_dict['facility'] = int(flds['PRI'])
+        event_dict['severity'] = int(flds['PRI'])
         event_dict['source'] = flds['HOSTNAME']
         event_dict['timereported'] = flds['TIMESTAMP']
         event_dict['timegenerated'] = event_dict['timereported']
@@ -562,6 +598,7 @@ class Event(object):
             logger.warning(u"Could not unmarshall a syslog event")
             logger.debug(to_unicode(unicode_ev))
             raise
+
         if hmac:
             # verify HMAC if the event has one, else generate a HMAC
             event.generate_hmac()
@@ -618,42 +655,3 @@ class Event(object):
         Apply some filters to the event
         """
         filters.apply(self)
-
-    @classmethod
-    def merge(cls, events):
-        """
-        Merge events into a single one
-        :param events: events to merge
-        :type events: list of Events
-        :return: global single Event
-        :rtype: Event
-        """
-        if not events:
-            return None
-        unique_events = list(set(events))
-        nb = len(unique_events)
-        if nb == 1:
-            return unique_events[0]
-        # copy the first event, as a base for the merged event
-        merged_event = copy(unique_events[0])
-        assert(isinstance(merged_event, Event))
-        # merge messages
-        merged_event.message = u'\n'.join(event.message for event in unique_events)
-        # merge tags
-        merged_event._tags = set(chain.from_iterable(event.tags for event in unique_events))
-        # merge custom fields
-        super_dict = {}
-        field_keys = set(field_key for event in unique_events for flds in event for field_key in flds)
-        for field_key in field_keys:
-            super_dict[field_key] = [event[field_key] for event in unique_events if field_key in event][0]
-        merged_event.custom_fields = super_dict
-        merged_event['merged_from_nb_event'] = nb
-        # generate a new UUID
-        merged_event._generate_uuid()
-        # generate a new HMAC if needed
-        if merged_event.hmac:
-            merged_event.generate_hmac(verify=False)
-        # todo: merge structured data
-        # todo: merged severity should be maximum of severities
-
-        return merged_event
