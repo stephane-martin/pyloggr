@@ -16,6 +16,7 @@ from distutils.util import strtobool
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 
+
 from .fix_unicode import to_unicode
 
 
@@ -31,8 +32,8 @@ def sleep(duration):
 
 
 def remove_pid_file(name):
-    from pyloggr.config import PIDS_DIRECTORY
-    pid_file = join(PIDS_DIRECTORY, name + u".pid")
+    from pyloggr.config import Config
+    pid_file = join(Config.PIDS_DIRECTORY, name + u".pid")
     if exists(pid_file):
         try:
             os.remove(pid_file)
