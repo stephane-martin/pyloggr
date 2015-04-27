@@ -13,7 +13,7 @@ from os.path import join
 import logging
 from threading import Lock
 
-from .build_config import ConfigParser, FilterBlock, IfBlock, IfFilterBlock, Assignment, TagsAssignment
+from .build_filters_config import parse_config_file, FilterBlock, IfBlock, IfFilterBlock, Assignment, TagsAssignment
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
 from .useragent import UserAgentEngine
@@ -33,7 +33,7 @@ class Filters(object):
     filters_locks = dict([(name, Lock()) for name in filters_modules])
 
     def __init__(self, config_directory):
-        self.filter_instructions = ConfigParser().parse_config_file(join(config_directory, 'filters_config'))
+        self.filter_instructions = parse_config_file(join(config_directory, 'filters_config'))
         self._filters = dict(
             [(name, module(config_directory)) for (name, module) in self.filters_modules.items()]
         )
