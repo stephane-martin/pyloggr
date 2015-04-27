@@ -35,7 +35,7 @@ from subprocess32 import Popen
 from redis import StrictRedis, RedisError
 from ujson import dumps, loads
 
-from .config import REDIS
+from pyloggr.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -213,20 +213,20 @@ class Cache(object):
     @classmethod
     def _connect_to_redis(cls):
         cls.redis_conn = StrictRedis(
-            host=REDIS.host,
-            port=REDIS.port,
-            password=REDIS.password,
+            host=Config.REDIS.host,
+            port=Config.REDIS.port,
+            password=Config.REDIS.password,
             decode_responses=False
         )
         try:
             cls.redis_conn.ping()
         except RedisError:
-            if REDIS.try_spawn_redis:
+            if Config.REDIS.try_spawn_redis:
                 cls._temp_redis_output_file = TemporaryFile()
                 try:
                     logger.info("Try to launch Redis instance")
                     cls.redis_child = Popen(
-                        args=[REDIS.path, REDIS.config_file], close_fds=True,
+                        args=[Config.REDIS.path, Config.REDIS.config_file], close_fds=True,
                         stdout=cls._temp_redis_output_file, stderr=cls._temp_redis_output_file,
                         start_new_session=True
                     )
