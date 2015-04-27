@@ -24,7 +24,7 @@ from past.builtins import basestring
 
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
-from pyloggr.config import SLEEP_TIME, SyslogServerConfig
+from pyloggr.config import SyslogServerConfig, Config
 from pyloggr.utils import sleep
 from pyloggr.utils.observable import NotificationProducer
 from pyloggr.cache import cache
@@ -98,11 +98,11 @@ class SyslogClientConnection(object):
     Encapsulates a connection with a syslog client
     """
 
-    def __init__(self, stream, address, syslog_config, rabbitmq_config, publisher):
+    def __init__(self, stream, address, syslog_parameters, rabbitmq_config, publisher):
         """
-        :type syslog_config: SyslogParameters
+        :type syslog_parameters: SyslogParameters
         """
-        self.syslog_config = syslog_config
+        self.syslog_parameters = syslog_parameters
         self.stream = stream
         self.address = address
         if address:
@@ -122,6 +122,7 @@ class SyslogClientConnection(object):
 
         self.nb_messages_received = 0
         self.nb_messages_transmitted = 0
+        self.packer_groups = []
 
         self.dispatch_dict = {
             'tcp': self.dispatch_tcp_client,
@@ -150,6 +151,16 @@ class SyslogClientConnection(object):
         logger.info("Syslog client has been disconnected {}:{}".format(self.client_host, self.client_port))
         list_of_clients.remove(self.client_id)
         yield []
+
+    def _find_publisher_for_event(self, event):
+        chosen_publisher = self.publisher
+        for condition, publisher in self.packer_groups:
+            if condition is None:
+                chosen_publisher = publisher
+            elif condition.eval(event):
+                chosen_publisher = publisher
+                break
+        return chosen_publisher
 
     @coroutine
     def _process_tcp_event(self, bytes_event):
@@ -184,12 +195,8 @@ class SyslogClientConnection(object):
             event['syslog_client_host'] = self.client_host
             event['syslog_protocol'] = 'tcp'
             self.nb_messages_received += 1
-
-            future = self.publisher.publish_event(
-                exchange=self.rabbitmq_config.exchange,
-                event=event,
-                routing_key='pyloggr.syslog.{}'.format(self.server_port)
-            )
+            chosen_publisher = self._find_publisher_for_event(event)
+            future = chosen_publisher.publish_event(event)
 
             # we use `add_future` instead of just `yield` to be able to return immediately
             # this way the RELP client can send the next event without waiting for the publication
@@ -244,11 +251,9 @@ class SyslogClientConnection(object):
 
             self.nb_messages_received += 1
 
-            future = self.publisher.publish_event(
-                exchange=self.rabbitmq_config.exchange,
-                event=event,
-                routing_key='pyloggr.syslog.{}'.format(self.server_port)
-            )
+            chosen_publisher = self._find_publisher_for_event(event)
+
+            future = chosen_publisher.publish_event(event)
 
             # we use `add_future` instead of just `yield` to be able to return immediately
             # this way the RELP client can send the next event without waiting for the publication
@@ -497,7 +502,7 @@ class SyslogClientConnection(object):
             self.disconnect()
             return
 
-        t = self.syslog_config.port_to_protocol.get(server_port, None)
+        t = self.syslog_parameters.port_to_protocol.get(server_port, None)
 
         if t is None:
             logger.warning("Don't know what to do with port '{}'".format(self.server_port))
@@ -510,6 +515,19 @@ class SyslogClientConnection(object):
             return
 
         self.server_port = server_port
+        self.publisher.base_routing_key = 'pyloggr.syslog.{}'.format(self.server_port)
+
+        # initialize the packer groups for this client
+        new_packer_groups = []
+        old_packer_groups = self.syslog_parameters.port_to_packer_groups.get(server_port, [])
+        for packer_group in old_packer_groups:
+            current_publisher = self.publisher
+            for packer_partial in reversed(packer_group.packers):
+                current_publisher = packer_partial(current_publisher)
+            new_packer_groups.append((packer_group.condition, current_publisher))
+
+        self.packer_groups = new_packer_groups
+
         list_of_clients.add(self.client_id, self)
         logger.info('New client is connected {}:{} to {}'.format(
             self.client_host, self.client_port, server_port
@@ -524,6 +542,9 @@ class SyslogClientConnection(object):
         """
         self.stream.close()
         list_of_clients.remove(self.client_id)
+        # stop the packers
+        for condition, publisher in self.packer_groups:
+            publisher.shutdown()
 
 
 class SyslogParameters(object):
@@ -534,29 +555,38 @@ class SyslogParameters(object):
         """
         :type conf: pyloggr.config.SyslogConfig
         """
+
+        # todo: simplify the mess
         self.conf = conf
         self.list_of_sockets = None
-        protocol_to_ports = dict()
-        port_to_protocol = dict()
-        unix_socket_names = list()
+        port_to_protocol = {}
+        unix_socket_names = []
+        port_to_packer_groups = {}
 
-        for server in conf.servers:
+        for server in conf.servers.values():
             assert(isinstance(server, SyslogServerConfig))
             if server.stype == 'unix':
-                unix_socket_names.append(server.socket)
-                port_to_protocol[server.socket] = 'socket'
+                unix_socket_names.append(server.socketname)
+                port_to_protocol[server.socketname] = 'socket'
+                if server.packer_groups:
+                    port_to_packer_groups[server.socketname] = server.packer_groups
             else:
-                for port in server.port:
+                for port in server.ports:
                     port_to_protocol[port] = server.stype
-                protocol_to_ports[server.stype] = server.port
+                if server.packer_groups:
+                    for port in server.ports:
+                        port_to_packer_groups[port] = server.packer_groups
 
-        self.protocol_to_ports = protocol_to_ports
         self.port_to_protocol = port_to_protocol
         self.unix_socket_names = unix_socket_names
-        self.ssl_ports = list(chain.from_iterable([server.port for server in conf.servers if server.ssl is not None]))
-        self.port_to_ssl_config = {}
+        self.ssl_ports = list(
+            chain.from_iterable([server.ports for server in conf.servers.values() if server.ssl is not None])
+        )
+        port_to_ssl_config = {}
         for port in self.ssl_ports:
-            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers if port in server.port][0]
+            port_to_ssl_config[port] = [server.ssl for server in conf.servers.values() if port in server.ports][0]
+        self.port_to_ssl_config = port_to_ssl_config
+        self.port_to_packer_groups = port_to_packer_groups
 
     def bind_all_sockets(self):
         """
@@ -566,15 +596,18 @@ class SyslogParameters(object):
         """
 
         list_of_sockets = list()
-        for server in self.conf.servers:
+        for server in self.conf.servers.values():
             address = '127.0.0.1' if server.localhost_only else ''
-            for port in server.port:
+            for port in server.ports:
                 list_of_sockets.append(
                     bind_sockets(port, address)
                 )
 
         if self.unix_socket_names:
-            list_of_sockets.append([bind_unix_socket(expanduser(sock), mode=0o666) for sock in self.unix_socket_names])
+            list_of_sockets.append(
+                [bind_unix_socket(expanduser(sock), mode=0o666) for sock in self.unix_socket_names]
+            )
+
         self.list_of_sockets = list(chain.from_iterable(list_of_sockets))
         logger.info("Pyloggr syslog will listen on: {}".format(','.join(str(x) for x in self.port_to_protocol.keys())))
         logger.info("SSL ports: {}".format(','.join(str(x) for x in self.ssl_ports)))
@@ -591,18 +624,18 @@ class SyslogServer(TCPServer, NotificationProducer):
     :todo: receive Linux kernel messages
     """
 
-    def __init__(self, rabbitmq_config, syslog_config, server_id):
+    def __init__(self, rabbitmq_config, syslog_parameters, server_id):
         """
-        :type syslog_config: SyslogParameters
+        :type syslog_parameters: SyslogParameters
         :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
         :type server_id: int
         """
-        assert(isinstance(syslog_config, SyslogParameters))
+        assert(isinstance(syslog_parameters, SyslogParameters))
         TCPServer.__init__(self)
         NotificationProducer.__init__(self)
 
         self.rabbitmq_config = rabbitmq_config
-        self.syslog_config = syslog_config
+        self.syslog_parameters = syslog_parameters
         self.server_id = server_id
         ListOfClients.set_server_id(server_id)
 
@@ -637,7 +670,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             yield self.stop_all()
-            yield sleep(SLEEP_TIME)
+            yield sleep(Config.SLEEP_TIME)
             if not self.shutting_down:
                 IOLoop.instance().add_callback(self.launch)
             return
@@ -651,7 +684,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         list_of_clients.unregister_queue()
         self.unregister_queue()
         yield self.stop_all()
-        yield sleep(SLEEP_TIME)
+        yield sleep(Config.SLEEP_TIME)
         if not self.shutting_down:
             IOLoop.instance().add_callback(self.launch)
 
@@ -663,14 +696,14 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         if not self.listening:
             self.listening = True
-            self.add_sockets(self.syslog_config.list_of_sockets)
+            self.add_sockets(self.syslog_parameters.list_of_sockets)
 
             cache.syslog_list[self.server_id].status = True
-            cache.syslog_list[self.server_id].ports = self.syslog_config.port_to_protocol.keys()
+            cache.syslog_list[self.server_id].ports = self.syslog_parameters.port_to_protocol.keys()
             yield self.notify_observers(
                 {
                     'action': 'add_server',
-                    'ports': self.syslog_config.port_to_protocol.keys(),
+                    'ports': self.syslog_parameters.port_to_protocol.keys(),
                     'server_id': self.server_id
                 },
                 'pyloggr.syslog.servers'
@@ -694,7 +727,7 @@ class SyslogServer(TCPServer, NotificationProducer):
         connection = SyslogClientConnection(
             stream=stream,
             address=address,
-            syslog_config=self.syslog_config,
+            syslog_parameters=self.syslog_parameters,
             rabbitmq_config=self.rabbitmq_config,
             publisher=self.publisher,
         )
@@ -755,13 +788,13 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
 
         port = connection.getsockname()[1]
-        if port not in self.syslog_config.ssl_ports:
+        if port not in self.syslog_parameters.ssl_ports:
             return super(SyslogServer, self)._handle_connection(connection, address)
 
         try:
             connection = ssl_wrap_socket(
                 connection,
-                self.syslog_config.port_to_ssl_config[port],
+                self.syslog_parameters.port_to_ssl_config[port],
                 server_side=True,
                 do_handshake_on_connect=False
             )
