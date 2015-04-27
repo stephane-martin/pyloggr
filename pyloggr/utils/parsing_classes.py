@@ -8,8 +8,66 @@ __author__ = 'stef'
 
 import ast
 import re
+import sys
+import logging
+
+from pyparsing import Keyword, Suppress, Literal, quotedString, Word, delimitedList, Group, pythonStyleComment
+from pyparsing import alphanums, alphas, operatorPrecedence, opAssoc, nums
 from future.builtins import str as text
 from .fix_unicode import to_unicode
+
+# noinspection PyUnusedLocal
+def make_plain_field(s, loc, toks):
+    return PlainField(toks[0])
+
+
+def compile_condition(toks):
+    toks = toks[0]
+    if isinstance(toks, Condition):
+        cond = toks
+    else:
+        cond = Condition.factory(toks[1], toks[0], toks[2])
+    cond.gen_lambda()
+    return cond
+
+
+thismodule = sys.modules[__name__]
+field_names = [
+    "severity", "facility", "app_name", "source", "programname", "syslogtag", "message", "uuid",
+    "timereported", "timegenerated", "trusted_comm", "trusted_exe", "trusted_cmdline"
+]
+
+for field_name in field_names:
+    setattr(thismodule, field_name, Keyword(field_name).setParseAction(
+        make_plain_field
+    ))
+
+
+class BuiltString(object):
+    def __init__(self, part_strings):
+        self.part_strings = part_strings
+
+    def str(self):
+        return "String({})".format('+'.join(str(part) for part in self.part_strings))
+
+    def __str__(self):
+        return self.str()
+
+    def __repr__(self):
+        return self.str()
+
+    def apply(self, ev):
+        strings = map(lambda s: s.apply(ev), self.part_strings)
+        strings = filter(lambda s: s is not None, strings)
+        return ''.join(strings)
+
+    @classmethod
+    def from_tokens(cls, toks):
+        return BuiltString(toks)
+
+
+def make_built_string(toks):
+    return BuiltString.from_tokens(toks[0])
 
 
 class Constant(object):
@@ -156,7 +214,7 @@ class AndCondition(Condition):
         return self.left.apply(ev) and self.right.apply(ev)
 
     def gen_ast(self):
-        return ast.BoolOp(left=self.left.gen_ast(), op=ast.And(), right=self.right.gen_ast())
+        return ast.BoolOp(op=ast.And(), values=[self.left.gen_ast(), self.right.gen_ast()])
 
 
 class OrCondition(Condition):
@@ -176,7 +234,7 @@ class OrCondition(Condition):
         return self.left.apply(ev) or self.right.apply(ev)
 
     def gen_ast(self):
-        return ast.BoolOp(left=self.left.gen_ast(), op=ast.Or(), right=self.right.gen_ast())
+        return ast.BoolOp(op=ast.Or(), values=[self.left.gen_ast(), self.right.gen_ast()])
 
 
 class Predicate(Condition):
@@ -389,3 +447,115 @@ class Notin(Predicate):
             return ast.Compare(left=left, ops=[ast.NotIn], comparators=[ast.Name(id='ev', ctx=ast.Load())])
         else:
             raise ValueError
+
+
+custom_fields   = Keyword("custom_fields")
+tags            = Keyword("tags")
+
+if_cond         = Suppress(Keyword("if"))
+else_cond       = Suppress(Keyword("else"))
+
+geoip           = Keyword("geoip")
+grok            = Keyword("grok")
+useragent       = Keyword("useragent")
+
+drop            = Keyword("drop")
+stop            = Keyword("stop")
+
+and_operand     = Keyword('and')
+or_operand      = Keyword('or')
+not_operand     = Keyword('not')
+
+equals          = Literal('==')
+assign          = Suppress(Literal(':='))
+kw_arg_assign   = Suppress(Literal('=') | Literal(':'))
+tags_assign     = Literal('+=') | Literal('-=')
+different       = Literal('!=')
+in_op           = Keyword('in')
+notin_op        = Keyword('notin')
+regexp_op       = Literal('~')
+regexp_i_op     = Literal('~*')
+
+open_par        = Literal('(')
+open_acc        = Literal('{')
+close_par       = Literal(')')
+close_acc       = Literal('}')
+
+# todo:
+
+open_delim      = Suppress(open_par | open_acc)
+close_delim     = Suppress(close_par | close_acc)
+
+
+integer         = Word(nums).setParseAction(lambda toks: int(toks[0]))
+
+my_qs = quotedString.setParseAction(quoted_string_to_constant)
+label = Word(initChars=alphas, bodyChars=alphanums + "_")
+
+# noinspection PyUnresolvedReferences
+plain_field = severity | facility | app_name | source | programname | syslogtag | message | uuid | \
+              timereported | timegenerated | trusted_comm | trusted_exe | trusted_cmdline
+
+custom_field_name = my_qs | label
+custom_field = (Literal('[') + custom_field_name + Literal(']')).setParseAction(
+    lambda s, loc, toks: CustomField(toks[1])
+)
+
+filter_name = (geoip | grok | useragent)
+
+comment_line = Suppress(pythonStyleComment)
+
+equals_predicate = (
+    (plain_field | custom_field | my_qs)
+    + equals
+    + (plain_field | custom_field | my_qs)
+)
+
+different_predicate = (
+    (plain_field | custom_field | my_qs)
+    + different
+    + (plain_field | custom_field | my_qs)
+)
+
+in_predicate = (
+    (my_qs | label)
+    + in_op
+    + (tags | custom_fields)
+)
+
+notin_predicate = (
+    (my_qs | label)
+    + notin_op
+    + (tags | custom_fields)
+)
+
+regexp_predicate = (
+    (plain_field | custom_field)
+    + regexp_op
+    + my_qs
+)
+
+regexpi_predicate = (
+    (plain_field | custom_field)
+    + regexp_i_op
+    + my_qs
+)
+
+predicate = (equals_predicate | different_predicate | in_predicate | notin_predicate | regexp_predicate | regexpi_predicate).setParseAction(
+    lambda s, loc, toks: Predicate.factory(toks[1], toks[0], toks[2])
+)
+
+condition = operatorPrecedence(
+    predicate,
+    [
+        (not_operand, 1, opAssoc.RIGHT),
+        (and_operand, 2, opAssoc.LEFT),
+        (or_operand, 2, opAssoc.LEFT),
+    ]
+)
+condition = condition.setParseAction(compile_condition)
+condition = condition.setResultsName('condition')
+
+built_string = Group(delimitedList(expr=(plain_field | custom_field | my_qs), delim='+')).setParseAction(
+    make_built_string
+)
