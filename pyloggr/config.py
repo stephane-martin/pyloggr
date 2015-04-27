@@ -6,15 +6,17 @@ Small hack to be able to import configuration from environment variable.
 __author__ = 'stef'
 
 import os
+import re
 import logging
 import logging.config
-import sys
 from os.path import dirname, exists, abspath, join, expanduser
 import ssl as ssl_module
 from base64 import b64decode
 
 from configobj import ConfigObj
 from marshmallow import Schema, fields
+
+
 
 
 class RabbitMQBaseSchema(Schema):
@@ -201,29 +203,32 @@ class SyslogServerSchema(Schema):
         strict = True
 
     name = fields.String(required=True)
-    port = fields.List(fields.Integer, allow_none=False)
+    ports = fields.List(fields.Integer, allow_none=False)
     stype = fields.String(required=True)
     localhost_only = fields.Boolean(default=False)
-    socket = fields.String(required=False, default='')
+    socketname = fields.String(required=False, default=u'')
     ssl = fields.Nested(SSLSchema, allow_none=True)
+    packer_groups = fields.List(fields.String, allow_none=True)
 
     def make_object(self, data):
         return SyslogServerConfig(**data)
 
 
 class SyslogServerConfig(object):
-    def __init__(self, name, port=None, stype='tcp', localhost_only=False, socket='', ssl=None):
+    def __init__(self, name, ports=None, stype='tcp', localhost_only=False, socketname='', ssl=None,
+                 packer_groups=None):
         self.name = name
-        if port is None:
-            self.port = []
-        elif isinstance(port, list):
-            self.port = [int(p) for p in port]
+        if ports is None:
+            self.ports = []
+        elif isinstance(ports, list):
+            self.ports = [int(p) for p in ports]
         else:
-            self.port = [int(port)]
+            self.ports = [int(ports)]
         self.stype = stype
         self.localhost_only = localhost_only
         self.ssl = ssl
-        self.socket = socket
+        self.socketname = socketname
+        self.packer_groups = packer_groups if packer_groups else []
 
 
 class SyslogSchema(Schema):
@@ -281,7 +286,7 @@ class ConfigSchema(Schema):
     HARVEST = fields.Nested(HarvestSchema)
 
     def make_object(self, data):
-        return Config(**data)
+        return GlobalConfig(**data)
 
 config_slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
@@ -290,11 +295,10 @@ config_slots = [
 ]
 
 
-class Config(object):
+class GlobalConfig(object):
     __slots__ = config_slots
 
     def __init__(self, **kw):
-
         for slot in config_slots:
             self.__setattr__(slot, kw.get(slot, None))
 
@@ -305,7 +309,7 @@ class Config(object):
     @classmethod
     def load_config_from_directory(cls, directory):
         """
-        :rtype: Config
+        :rtype: GlobalConfig
         """
         config_file = join(directory, 'pyloggr_config')
         config = ConfigObj(infile=config_file, interpolation=False, encoding="utf-8", write_empty_values=True,
@@ -321,6 +325,7 @@ class Config(object):
                     server.ssl.ca_certs = ssl_module.CERT_NONE
                 server.ssl.ssl_version = getattr(ssl_module, server.ssl.ssl_version)
                 server.ssl.cert_reqs = getattr(ssl_module, server.ssl.cert_reqs)
+        c.SYSLOG.servers = {server.name: server for server in c.SYSLOG.servers}
 
         if not c.REDIS.password:
             c.REDIS.password = None
@@ -331,7 +336,7 @@ class Config(object):
         return c
 
 
-def set_logging(filename):
+def set_logging(filename, level="DEBUG"):
     logging_config_dict = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -372,7 +377,7 @@ def set_logging(filename):
             },
             'pyloggr': {
                 'handlers': ['console', 'tofile'],
-                'level': LOGGING_FILES.level,
+                'level': level,
                 'propagate': False
             },
             'security': {
@@ -386,7 +391,7 @@ def set_logging(filename):
     }
 
     filename = abspath(expanduser(filename))
-    security_filename = abspath(expanduser(LOGGING_FILES.security))
+    security_filename = abspath(expanduser(Config.LOGGING_FILES.security))
     if not exists(dirname(filename)):
         os.makedirs(dirname(filename))
     if not exists(dirname(security_filename)):
@@ -398,24 +403,25 @@ def set_logging(filename):
     logging.config.dictConfig(logging_config_dict)
 
 
-CONFIG_DIR = os.environ.get('PYLOGGR_CONFIG_DIR')
-thismodule = sys.modules[__name__]
-if os.environ.get('SPHINX_BUILD'):
-    # mock the config object when we are just building sphinx documentation
-    for attr in config_slots:
-        setattr(thismodule, attr, 'Mock')
-else:
-    if CONFIG_DIR is None:
-        raise RuntimeError("Configuration directory is not specified")
+class Config(object):
+    pass
 
-    # inject the config_obj attributes in this module, so that other modules can do things like
-    # from config import PARAMETER
-    config_obj = Config.load_config_from_directory(CONFIG_DIR)
+
+def set_configuration(configuration_directory):
+    config_obj = GlobalConfig.load_config_from_directory(configuration_directory)
     for attr in config_slots:
-        setattr(thismodule, attr, getattr(config_obj, attr))
-    POSTGRESQL.DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
-        POSTGRESQL.dbname, POSTGRESQL.user, POSTGRESQL.password, POSTGRESQL.host, POSTGRESQL.port,
-        POSTGRESQL.connect_timeout
+        setattr(Config, attr, getattr(config_obj, attr))
+    Config.POSTGRESQL.DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
+        Config.POSTGRESQL.dbname, Config.POSTGRESQL.user, Config.POSTGRESQL.password, Config.POSTGRESQL.host,
+        Config.POSTGRESQL.port, Config.POSTGRESQL.connect_timeout
     )
-
-
+    Config.CONFIG_DIR = configuration_directory
+    from pyloggr.event import Event
+    # noinspection PyUnresolvedReferences
+    Event.HMAC_KEY = Config.HMAC_KEY
+    from pyloggr.packers.build_packers_config import parse_config_file
+    packers_config = parse_config_file(join(configuration_directory, 'packers_config'))
+    syslog_servers_with_packers = [server for server in Config.SYSLOG.servers.values() if server.packer_groups]
+    for syslog_server in syslog_servers_with_packers:
+        syslog_server.packer_groups = [packers_config[packer_group_name]
+                                       for packer_group_name in syslog_server.packer_groups]
