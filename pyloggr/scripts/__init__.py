@@ -18,7 +18,7 @@ from tornado.ioloop import IOLoop
 from tornado.process import fork_processes
 from tornado.gen import coroutine
 
-from pyloggr.config import MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+from pyloggr.config import Config
 from pyloggr.cache import cache, CacheError
 
 
@@ -94,8 +94,8 @@ class PyloggrProcess(object):
 
         io_loop = IOLoop.instance()
 
-        deadline = time.time() + MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
-        countdown = MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+        deadline = time.time() + Config.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+        countdown = Config.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
 
         # get rid of sleepers
         sleepers = [timeout for timeout in io_loop._timeouts if getattr(timeout.callback, 'sleeper', None)]
