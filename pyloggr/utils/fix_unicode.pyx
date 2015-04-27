@@ -19,15 +19,18 @@ cdef unicode guess_bytes(bytes bstring):
     except UnicodeDecodeError:
         pass
 
-    if byte_cr in bstring and byte_lf not in bstring:
+    chars = set(bstring)
+    if byte_cr in chars and byte_lf not in chars:
         return bstring.decode('macroman')
     else:
         return bstring.decode('windows-1252', 'replace')
 
 
-cpdef unicode to_unicode(basestring s):
+cpdef unicode to_unicode(s):
     if type(s) is unicode:
         return <unicode>s
+    if type(s) is int:
+        return unicode(s)
     if isinstance(s, bytes):
         return guess_bytes(<bytes>s)
     if isinstance(s, unicode):
