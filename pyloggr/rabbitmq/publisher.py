@@ -28,6 +28,7 @@ class Publisher(object):
     def __init__(self, rabbitmq_config, base_routing_key=u''):
         """
         :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        :type base_routing_key: str
         """
 
         self._parameters = pika.ConnectionParameters(
