@@ -16,15 +16,13 @@ from jinja2 import Environment, PackageLoader
 import momoko
 import psycopg2
 
-
-from ..rabbitmq import management
-from ..rabbitmq.notifications_consumer import NotificationsConsumer
-from ..rabbitmq import RabbitMQConnectionError
-from ..utils.observable import Observable, Observer
+from pyloggr.rabbitmq import management
+from pyloggr.rabbitmq.notifications_consumer import NotificationsConsumer
+from pyloggr.rabbitmq import RabbitMQConnectionError
+from pyloggr.utils.observable import Observable, Observer
 from pyloggr.config import Config
 from pyloggr.cache import cache
 from pyloggr.utils import sleep
-
 
 logger = logging.getLogger(__name__)
 PERIODIC_RABBIT_STATUS_TIME = 10 * 1000
@@ -188,7 +186,6 @@ class Upload(RequestHandler):
     pass
     # todo: upload log files via form or via POST API
     # put files in HARVEST directory
-
 
 
 class PyloggrApplication(Application):
