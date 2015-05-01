@@ -114,6 +114,7 @@ FACILITY = {
 }
 
 
+
 #TODO: complete list of severities
 SEVERITY = {
     0:  u'emerg',
@@ -141,7 +142,8 @@ SEVERITY_TO_INT = {
     u'warning': 4,
     u'notice': 5,
     u'info': 6,
-    u'debug': 7
+    u'debug': 7,
+    u'': 5
 }
 
 
