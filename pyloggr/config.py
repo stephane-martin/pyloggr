@@ -250,7 +250,6 @@ class HarvestDirectorySchema(Schema):
         strict = True
 
     packer_group = fields.String(default=u'')
-    remove_after = fields.Boolean(default=True)
     directory_name = fields.String(required=True)
     recursive = fields.Boolean(default=False)
     facility = fields.String(default=u'')
@@ -263,10 +262,9 @@ class HarvestDirectorySchema(Schema):
 
 
 class HarvestDirectory(object):
-    def __init__(self, directory_name, app_name=u'', remove_after=True, packer_group=u'', recursive=False, facility=u'',
+    def __init__(self, directory_name, app_name=u'', packer_group=u'', recursive=False, facility=u'',
                  severity=u'', source=u''):
         self.packer_group = packer_group
-        self.remove_after = remove_after
         self.directory_name = directory_name
         self.recursive = recursive
         if facility:

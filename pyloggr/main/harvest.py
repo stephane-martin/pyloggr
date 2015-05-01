@@ -22,6 +22,7 @@ from tornado.ioloop import IOLoop, PeriodicCallback
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.event import Event
 from pyloggr.packers import BasePacker
+from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class Harvest(object):
             current_publisher, closed_ev = yield self.get_publisher()
         except RabbitMQConnectionError:
             # no connection to rabbitmq
+            yield sleep(60)
             self.uploading_list.remove(fname)
             return
 
@@ -192,20 +194,22 @@ class Harvest(object):
         while len(results) != nb_publications:
             yield sleep(1)
         # fname is finished
-        self.uploading_list.remove(fname)
         if isinstance(current_publisher, BasePacker):
             # stop the packer
             current_publisher.shutdown()
         if closed_ev.is_set():
             # we lost rabbitmq connection somewhen...
             self._publisher = None
+            yield sleep(60)
+            self.uploading_list.remove(fname)
             return
         if not all(results):
             # some publications have failed
+            yield sleep(60)
+            self.uploading_list.remove(fname)
             return
-        # everything good, remove or move the source file
-        if directory_obj.remove_after:
-            os.remove(fname)
+        # everything good, remove the source file
+        os.remove(fname)
 
     @coroutine
     def get_publisher(self):
