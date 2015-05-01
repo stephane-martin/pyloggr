@@ -142,4 +142,4 @@ if __name__ == '__main__':
     CONFIG_DIR = "/Users/stef/Documents/Seafile/dev/pyloggr_project/config"
     from pyloggr.config import set_configuration
     set_configuration(CONFIG_DIR)
-    print packer_group_with_condition.parseString(b)
+    print(packer_group_with_condition.parseString(b))

@@ -9,7 +9,7 @@ __author__ = 'stef'
 from math import fabs
 
 from tornado.gen import coroutine, Return
-from tornado.ioloop import PeriodicCallback
+from tornado.ioloop import IOLoop
 from spooky_hash import Hash128
 from arrow import Arrow
 
@@ -71,10 +71,14 @@ class PackerByTime(BasePacker):
         diff = fabs(diff.total_seconds()) * 1000
         if diff >= self.merge_event_window:
             # the last event was emitted too late: publish and empty the queue
-            yield queue.publish()
+            copy_of_queue = queue.copy_and_void()
+            has_been_published = queue.append(event)
+            IOLoop.instance().add_callback(copy_of_queue.publish)
+        else:
+            has_been_published = queue.append(event)
 
         # store the current event in the queue
-        status = yield queue.append(event)
+        status = yield has_been_published
         # yield returns only after the event has been published
         raise Return((status, event))
 

@@ -8,7 +8,9 @@ __author__ = 'stef'
 
 import re
 from tornado.gen import coroutine, Return
+from tornado.ioloop import IOLoop
 
+from pyloggr.utils import to_unicode
 from . import BasePacker, PackerQueue
 
 
@@ -25,6 +27,7 @@ class Formatters(object):
         frmat = frmat.replace("$SEVERITY", r"(?P<SEVERITY>\S+)")
         frmat = frmat.replace("$FACILITY", r"(?P<FACILITY>\S+)")
         frmat = frmat.replace("$MESSAGE", r"(?P<MESSAGE>.*)")
+        frmat = frmat.replace("$APP_NAME", r"(?P<APP_NAME>\S+")
         return re.compile(frmat)
 
     def __init__(self, list_of_formats):
@@ -45,8 +48,10 @@ class Formatters(object):
                     event.severity = event.make_severity(d['SEVERITY'])
                 if 'DATETIME' in d:
                     event._timereported = event.make_arrow_datetime(d['DATETIME'])
+                if 'APP_NAME' in d:
+                    event.app_name = to_unicode(d['APP_NAME'])
                 if 'MESSAGE' in d:
-                    event.message = d['MESSAGE']
+                    event.message = to_unicode(d['MESSAGE'])
                 event.add_tags(u"formatted")
                 return True
         return False
@@ -79,7 +84,8 @@ class PackerByFormat(BasePacker):
         if len(queue) == 0:
             if self.formatters.apply(event):
                 # the event matches start_format: store it in the empty queue
-                status = yield queue.append(event)
+                have_been_published_future = queue.append(event)
+                status = yield have_been_published_future
                 raise Return((status, event))
             else:
                 # we don't have any event in queue, and the current event is not a "start event"
@@ -90,12 +96,17 @@ class PackerByFormat(BasePacker):
         # we have a previous start event in queue
         if self.formatters.apply(event):
             # the current event is also a "start event"
-            # let's publish the past queue
-            yield queue.publish()
-            # ... and store the current event in the emptied queue
-            status = yield queue.append(event)
+            # empty the queue
+            copy_of_queue = queue.copy_and_void()
+            # store the current event in the emptied queue
+            have_been_published_future = queue.append(event)
+            # publish the previous queue
+            IOLoop.instance().add_callback(copy_of_queue.publish)
+            # wait that event has been published
+            status = yield have_been_published_future
             raise Return((status, event))
         else:
             # the current event is not a start event, we just append it to the queue
-            status = yield queue.append(event)
+            have_been_published_future = queue.append(event)
+            status = yield have_been_published_future
             raise Return((status, event))

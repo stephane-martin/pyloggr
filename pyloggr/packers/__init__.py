@@ -22,6 +22,7 @@ from pyloggr.utils import to_unicode
 
 logger = logging.getLogger(__name__)
 
+
 def merge_events(list_of_events):
     """
     Merge several events into a single one
@@ -37,7 +38,7 @@ def merge_events(list_of_events):
         if not event.timereported:
             event.timereported = event.timegenerated
 
-    unique_events = SortedSet(list_of_events, key=lambda ev: ev.timereported)
+    unique_events = SortedSet(list_of_events)
     nb = len(unique_events)
     if nb == 1:
         return unique_events[0]
@@ -88,24 +89,32 @@ def merge_events(list_of_events):
 
 
 class PackerQueue(list):
-    def __init__(self, publisher):
-        super(PackerQueue, self).__init__()
+    def __init__(self, publisher, i=None):
+        i = [] if i is None else i
+        super(PackerQueue, self).__init__(i)
         self.publisher = publisher
         self.last_action = Arrow.utcnow()
+
+    def copy_and_void(self):
+        q = PackerQueue(self.publisher, i=self)
+        self[:] = []
+        self.last_action = Arrow.utcnow()
+        return q
 
     @coroutine
     def publish(self):
         """
         Merge and publish the events that have been stored in the queue
         """
-        self.last_action = Arrow.utcnow()
+
         l = len(self)
         if l == 0:
             return
-        elif l == 1:
-            merged_event = self[0]
+        copy_of_queue = self.copy_and_void()
+        if l == 1:
+            merged_event = copy_of_queue[0]
         else:
-            merged_event = merge_events(self)
+            merged_event = merge_events(copy_of_queue)
 
         # publish the merged event to the next publisher
         status, ev = yield self.publisher.publish_event(merged_event)
@@ -113,10 +122,6 @@ class PackerQueue(list):
         # notify that all the events that are stored in this queue have been published
         for event in self:
             event.have_been_published.set_result(status)
-
-        # empty the queue
-        self[:] = []
-        self.last_action = Arrow.utcnow()
 
     def append(self, event):
         """
