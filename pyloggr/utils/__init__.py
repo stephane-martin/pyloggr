@@ -13,9 +13,9 @@ from os.path import join, exists
 import os
 from distutils.util import strtobool
 
+from future.builtins import input
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
-
 
 from .fix_unicode import to_unicode
 
@@ -42,9 +42,18 @@ def remove_pid_file(name):
 
 
 def ask_question(question):
-    answer = raw_input(question + ' ').strip().lower()
+    answer = input(question + ' ').strip().lower()
     try:
         answer = strtobool(answer)
     except ValueError:
         answer = False
     return answer
+
+
+def directory_is_writeable(dname):
+    """
+    Checks that directory `dname` exists (we create it if needed), is really a directory, and is writeable
+    :param dname: directory name
+    :return: nothing
+    :raise OSError: when tests fail
+    """
