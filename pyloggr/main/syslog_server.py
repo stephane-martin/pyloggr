@@ -19,8 +19,8 @@ from tornado.ioloop import IOLoop
 from tornado.tcpserver import TCPServer
 from tornado.netutil import bind_unix_socket, ssl_wrap_socket, errno_from_exception, bind_sockets
 from tornado.iostream import SSLIOStream, StreamClosedError
-# noinspection PyPackageRequirements
-from past.builtins import basestring
+# noinspection PyPackageRequirements,PyCompatibility
+from past.builtins import basestring as basestr
 
 from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
@@ -482,7 +482,7 @@ class SyslogClientConnection(object):
 
         try:
             server_sockname = self.stream.socket.getsockname()
-            if isinstance(server_sockname, basestring):
+            if isinstance(server_sockname, basestr):
                 server_port = server_sockname       # socket unix
             elif len(server_sockname) == 2:
                 server_port = server_sockname[1]    # ipv4
