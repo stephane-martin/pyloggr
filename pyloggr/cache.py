@@ -30,12 +30,19 @@ __author__ = 'stef'
 from tempfile import TemporaryFile
 import logging
 import time
+from io import open, BytesIO
+import os
+from os.path import exists, getsize
 
 from subprocess32 import Popen
 from redis import StrictRedis, RedisError
 from ujson import dumps, loads
+from future.builtins import str as text
+from future.builtins import bytes as p3bytes
+from lockfile import LockFile
 
 from pyloggr.config import Config
+from pyloggr.event import Event, InvalidSignature, ParsingError
 
 logger = logging.getLogger(__name__)
 
@@ -291,28 +298,111 @@ class RescueQueue(object):
         """
         self.redis_conn = redis_conn
 
-    def append(self, bytes_ev):
-        # todo: refactor so that we can accept an Event instead of bytes
-        try:
-            self.redis_conn.rpush(rescue_key, bytes_ev)
-        except RedisError:
+    @staticmethod
+    def store_event_on_fs(bytes_event):
+        # acquire lock so that only this process can write to rescue file
+        with LockFile(Config.RESCUE_QUEUE_FNAME):
+            with open(Config.RESCUE_QUEUE_FNAME, mode='ab') as fhandle:
+                fhandle.write(str(len(bytes_event) + 1).zfill(10) + ' ' + bytes_event + '\n')
+
+    def append(self, bytes_or_event):
+        if isinstance(bytes_or_event, p3bytes):
+            ev = Event.parse_bytes_to_event(bytes_or_event)
+        elif isinstance(bytes_or_event, text):
+            ev = Event.parse_bytes_to_event(bytes_or_event)
+        elif isinstance(bytes_or_event, Event):
+            # Event
+            ev = bytes_or_event
+        else:
+            logger.warning("RescueQueue.append: unknow type for bytes_or_event")
             return False
+        try:
+            ev.generate_hmac()
+        except InvalidSignature:
+            logger.error("RescueQueue.append: the given event already has an invalid signature")
+            return False
+        bytes_event = ev.dumps()
+        try:
+            self.redis_conn.rpush(rescue_key, bytes_event)
+        except RedisError:
+            try:
+                self.store_event_on_fs(bytes_event)
+                return True
+            except:
+                logger.exception("Exception happened when cache tried to store event on FS")
+                return False
         return True
 
     def __len__(self):
+        redis_len = 0
         try:
-            return self.redis_conn.llen(rescue_key)
+            redis_len = self.redis_conn.llen(rescue_key)
         except RedisError:
-            return None
+            pass
+
+        file_len = 0
+        if exists(Config.RESCUE_QUEUE_FNAME):
+            size = getsize(Config.RESCUE_QUEUE_FNAME)
+            if size > 0:
+                # rough estimate
+                file_len = max(1, size / 250)
+
+        return redis_len + file_len
+
+    @staticmethod
+    def bytes_to_event(bytes_event):
+        ev = None
+        try:
+            ev = Event.parse_bytes_to_event(bytes_event, hmac=True, json=True)
+        except InvalidSignature:
+            logger.error("Dropping one event from RescueQueue with invalid signature")
+        except ParsingError:
+            logger.warning("Dropping one event from RescueQueue because of ParsingError")
+        return ev
+
+    @staticmethod
+    def read_all_events_from_fs():
+        if not exists(Config.RESCUE_QUEUE_FNAME):
+            return []
+        with LockFile(Config.RESCUE_QUEUE_FNAME):
+            with open(Config.RESCUE_QUEUE_FNAME, mode='rb') as fhandle:
+                buf = BytesIO(fhandle.read())
+            os.remove(Config.RESCUE_QUEUE_FNAME)
+        bytes_events = []
+        while True:
+            try:
+                nb_bytes = int(buf.read(11))
+            except ValueError:
+                break
+            bytes_events.append(buf.read(nb_bytes))
+        buf.close()
+        return bytes_events
 
     def get_generator(self):
-        try:
-            next_ev = self.redis_conn.lpop(rescue_key)
-            if next_ev is None:
-                raise StopIteration
-            yield next_ev
-        except RedisError:
-            raise StopIteration
+        while True:
+            try:
+                bytes_event = self.redis_conn.lpop(rescue_key)
+            except RedisError:
+                logger.warning("RedisError in RescueQueue.get_generator")
+                # redis not available, next we check events on FS
+                break
+            else:
+                if bytes_event is None:
+                    # no more events in redis, next we check events on FS
+                    break
+                event = self.bytes_to_event(bytes_event)
+                if event:
+                    yield event
 
+        # now let's get events from FS
+        if not exists(Config.RESCUE_QUEUE_FNAME):
+            raise StopIteration
+        bytes_events = self.read_all_events_from_fs()
+        for bytes_event in bytes_events:
+            event = self.bytes_to_event(bytes_event)
+            if event is None:
+                continue
+            yield event
+        raise StopIteration
 
 cache = Cache()
