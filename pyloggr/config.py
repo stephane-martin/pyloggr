@@ -257,7 +257,6 @@ class HarvestDirectorySchema(Schema):
     severity = fields.String(default=u'')
     app_name = fields.String(default=u'')
     source = fields.String(default=u'')
-    events_stack = fields.Integer(default=1000)
 
     def make_object(self, data):
         return HarvestDirectory(**data)
@@ -265,7 +264,7 @@ class HarvestDirectorySchema(Schema):
 
 class HarvestDirectory(object):
     def __init__(self, directory_name, app_name=u'', remove_after=True, packer_group=u'', recursive=False, facility=u'',
-                 severity=u'', source=u'', events_stack=1000):
+                 severity=u'', source=u''):
         self.packer_group = packer_group
         self.remove_after = remove_after
         self.directory_name = directory_name
@@ -280,7 +279,6 @@ class HarvestDirectory(object):
         self.severity = severity
         self.app_name = app_name
         self.source = source
-        self.events_stack = events_stack
 
 
 class HarvestConfig(object):
