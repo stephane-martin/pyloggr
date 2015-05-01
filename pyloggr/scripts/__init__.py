@@ -90,7 +90,8 @@ class PyloggrProcess(object):
     def shutdown(self):
 
         self.logger.info("Shutting down '{}'...".format(self.task_id))
-        yield self.pyloggr_process.shutdown()
+        if self.pyloggr_process:
+            yield self.pyloggr_process.shutdown()
 
         io_loop = IOLoop.instance()
 
