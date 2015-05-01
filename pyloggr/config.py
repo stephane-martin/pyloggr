@@ -6,7 +6,6 @@ Small hack to be able to import configuration from environment variable.
 __author__ = 'stef'
 
 import os
-import re
 import logging
 import logging.config
 from os.path import dirname, exists, abspath, join, expanduser
@@ -16,7 +15,7 @@ from base64 import b64decode
 from configobj import ConfigObj
 from marshmallow import Schema, fields
 
-
+from pyloggr.utils.constants import FACILITY, SEVERITY
 
 
 class RabbitMQBaseSchema(Schema):
@@ -246,25 +245,58 @@ class SyslogConfig(object):
         self.servers = servers
 
 
-class HarvestConfig(object):
-    def __init__(self, directory="~/harvest", remove_after=True):
-        self.directory = expanduser(directory)
+class HarvestDirectorySchema(Schema):
+    class Meta(object):
+        strict = True
+
+    packer_group = fields.String(default=u'')
+    remove_after = fields.Boolean(default=True)
+    directory_name = fields.String(required=True)
+    recursive = fields.Boolean(default=False)
+    facility = fields.String(default=u'')
+    severity = fields.String(default=u'')
+    app_name = fields.String(default=u'')
+    source = fields.String(default=u'')
+
+    def make_object(self, data):
+        return HarvestDirectory(**data)
+
+
+class HarvestDirectory(object):
+    def __init__(self, directory_name, app_name=u'', remove_after=True, packer_group=u'', recursive=False, facility=u'',
+                 severity=u'', source=u''):
+        self.packer_group = packer_group
         self.remove_after = remove_after
+        self.directory_name = directory_name
+        self.recursive = recursive
+        if facility:
+            if facility not in FACILITY.values():
+                raise ValueError("HARVEST configuration: invalid 'facility' value")
+        self.facility = facility
+        if severity:
+            if severity not in SEVERITY.values():
+                raise ValueError("HARVEST configuration: invalid 'severity' value")
+        self.severity = severity
+        self.app_name = app_name
+        self.source = source
+
+
+class HarvestConfig(object):
+    def __init__(self, directories):
+        self.directories = directories
 
 
 class HarvestSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
-
-    directory = fields.String(default='~/harvest')
-    remove_after = fields.Boolean(default=True)
+    directories = fields.Nested(HarvestDirectorySchema, allow_null=True, many=True)
 
     def make_object(self, data):
         return HarvestConfig(**data)
 
 
 class ConfigSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = fields.Integer(default=10)
@@ -284,6 +316,7 @@ class ConfigSchema(Schema):
     SYSLOG = fields.Nested(SyslogSchema)
     LOGGING_FILES = fields.Nested(LoggingSchema)
     HARVEST = fields.Nested(HarvestSchema)
+    RESCUE_QUEUE_FNAME = fields.String(default=u"~/rescue")
 
     def make_object(self, data):
         return GlobalConfig(**data)
@@ -291,7 +324,7 @@ class ConfigSchema(Schema):
 config_slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
     'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST'
+    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST', 'RESCUE_QUEUE_FNAME'
 ]
 
 
@@ -315,9 +348,18 @@ class GlobalConfig(object):
         config = ConfigObj(infile=config_file, interpolation=False, encoding="utf-8", write_empty_values=True,
                            raise_errors=True, file_error=True)
         d = config.dict()
+
         for server_name in d['SYSLOG']:
             d['SYSLOG'][server_name]['name'] = server_name
         d['SYSLOG'] = {'servers': d['SYSLOG'].values()}
+
+        new = {}
+        for harvest_directory in d['HARVEST']:
+            directory = abspath(expanduser(harvest_directory))
+            d['HARVEST'][harvest_directory]['directory_name'] = directory
+            new[directory] = d['HARVEST'][harvest_directory]
+        d['HARVEST'] = {'directories': new.values()}
+
         c = cls.load(d)
         for server in c.SYSLOG.servers:
             if server.ssl is not None:
@@ -326,12 +368,22 @@ class GlobalConfig(object):
                 server.ssl.ssl_version = getattr(ssl_module, server.ssl.ssl_version)
                 server.ssl.cert_reqs = getattr(ssl_module, server.ssl.cert_reqs)
         c.SYSLOG.servers = {server.name: server for server in c.SYSLOG.servers}
+        c.HARVEST.directories = {directory_obj.directory_name: directory_obj for directory_obj in c.HARVEST.directories}
 
         if not c.REDIS.password:
             c.REDIS.password = None
 
         c.HMAC_KEY = b64decode(c.HMAC_KEY)
-        c.PIDS_DIRECTORY = expanduser(c.PIDS_DIRECTORY)
+        c.PIDS_DIRECTORY = abspath(expanduser(c.PIDS_DIRECTORY))
+        # todo: make utils to check if directory exists and is writeable
+        if not exists(c.PIDS_DIRECTORY):
+            os.makedirs(c.PIDS_DIRECTORY)
+        if not os.access(c.PIDS_DIRECTORY, os.W_OK | os.X_OK):
+            raise ValueError("PID directory '{}' must be writeable".format(c.PIDS_DIRECTORY))
+        c.RESCUE_QUEUE_FNAME = abspath(expanduser(c.RESCUE_QUEUE_FNAME))
+        rescue_dir = dirname(c.RESCUE_QUEUE_FNAME)
+        if not exists(rescue_dir):
+            os.makedirs(rescue_dir)
 
         return c
 
@@ -409,19 +461,36 @@ class Config(object):
 
 def set_configuration(configuration_directory):
     config_obj = GlobalConfig.load_config_from_directory(configuration_directory)
+    # copy the parameters in the Config object
     for attr in config_slots:
         setattr(Config, attr, getattr(config_obj, attr))
+
+    # PGSQL DSN
     Config.POSTGRESQL.DSN = 'dbname={} user={} password={} host={} port={} connect_timeout={}'.format(
         Config.POSTGRESQL.dbname, Config.POSTGRESQL.user, Config.POSTGRESQL.password, Config.POSTGRESQL.host,
         Config.POSTGRESQL.port, Config.POSTGRESQL.connect_timeout
     )
+
     Config.CONFIG_DIR = configuration_directory
+
+    # set HMAC key so that Event can compute hmacs
     from pyloggr.event import Event
     # noinspection PyUnresolvedReferences
     Event.HMAC_KEY = Config.HMAC_KEY
+
+    # read packers_config and inject it in Config.SYSLOG.servers and Config.HARVEST.directories
     from pyloggr.packers.build_packers_config import parse_config_file
     packers_config = parse_config_file(join(configuration_directory, 'packers_config'))
+    # Config.SYSLOG.servers ...
     syslog_servers_with_packers = [server for server in Config.SYSLOG.servers.values() if server.packer_groups]
     for syslog_server in syslog_servers_with_packers:
-        syslog_server.packer_groups = [packers_config[packer_group_name]
-                                       for packer_group_name in syslog_server.packer_groups]
+        syslog_server.packer_groups = [
+            packers_config[packer_group_name] for packer_group_name in syslog_server.packer_groups
+        ]
+    # Config.HARVEST.directories ...
+    harvest_directories_with_packers = [
+        directory_obj for directory_obj in Config.HARVEST.directories.values() if directory_obj.packer_group
+    ]
+    for directory_obj in harvest_directories_with_packers:
+        directory_obj.packer_group = packers_config[directory_obj.packer_group]
+
