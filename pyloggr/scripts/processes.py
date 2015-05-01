@@ -6,7 +6,10 @@ Describe the pyloggr's processes.
 
 __author__ = 'stef'
 
+import logging
+
 from tornado.gen import coroutine
+from tornado.ioloop import IOLoop
 
 from pyloggr.scripts import PyloggrProcess
 from pyloggr.main.syslog_server import SyslogServer, SyslogParameters
@@ -15,6 +18,8 @@ from pyloggr.main.shipper2pgsql import PostgresqlShipper
 from pyloggr.main.web_frontend import WebServer
 from pyloggr.main.harvest import Harvest
 from pyloggr.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class SyslogProcess(PyloggrProcess):
@@ -76,6 +81,14 @@ class HarvestProcess(PyloggrProcess):
 
     @coroutine
     def launch(self):
-        self.pyloggr_process = Harvest(Config.HARVEST)
-        self.logger.info("Starting {}".format(self.name))
-        yield self.pyloggr_process.launch()
+        try:
+            self.pyloggr_process = Harvest(
+                harvest_config=Config.HARVEST,
+                to_rabbitmq_config=Config.SYSLOG_PUBLISHER
+            )
+        except OSError:
+            logger.exception("Harvest Initialization failed")
+            IOLoop.instance().add_callback(self.shutdown)
+        else:
+            self.logger.info("Starting {}".format(self.name))
+            yield self.pyloggr_process.launch()
