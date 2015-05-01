@@ -16,7 +16,7 @@ from io import open
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileMovedEvent, FileDeletedEvent
-from tornado.gen import coroutine, Return, sleep
+from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop, PeriodicCallback
 
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
