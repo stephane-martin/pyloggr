@@ -6,6 +6,8 @@ cdef bytes byte_lf = b'\n'
 
 
 cdef unicode guess_bytes(bytes bstring):
+    if len(bstring) == 0:
+        return u''
     if bstring[0] == b'\xfe':
         if len(bstring) > 1:
             if bstring[1] == b'\xff':
