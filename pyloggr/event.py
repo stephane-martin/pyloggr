@@ -18,9 +18,11 @@ import arrow
 import arrow.parser
 import dateutil.parser
 from datetime import datetime
+from functools import total_ordering
+
 from marshmallow import Schema, fields
 from future.utils import python_2_unicode_compatible, raise_from
-# noinspection PyPackageRequirements
+# noinspection PyPackageRequirements,PyCompatibility
 from past.builtins import basestring as basestr
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -31,8 +33,9 @@ from spooky_hash import Hash128
 
 from pyloggr.utils.structured_data import parse_structured_data
 from pyloggr.utils import to_unicode
-from .utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG, RE_TRUSTED_FIELDS
-from .utils.constants import REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR, EVENT_STR_FMT, REGEXP_SYSLOG23
+from pyloggr.utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG
+from pyloggr.utils.constants import RE_TRUSTED_FIELDS, REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR
+from pyloggr.utils.constants import EVENT_STR_FMT, REGEXP_SYSLOG23
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +53,7 @@ class EventSchema(Schema):
     """
     Marshmallow schema for the :py:class:`Event` class
     """
-
-    class Meta:
+    class Meta(object):
         strict = True
         json_module = ujson
         ordered = True
@@ -115,6 +117,7 @@ FACILITY_VALUES = FACILITY.values()
 
 
 @python_2_unicode_compatible
+@total_ordering
 class Event(object):
     HMAC_KEY = None
     """
@@ -155,8 +158,8 @@ class Event(object):
 
     @staticmethod
     def make_severity(severity):
-        if severity is None:
-            return u''
+        if not severity:
+            return SEVERITY[5]
         try:
             # from encoded priority
             return SEVERITY.get(int(severity) & 7, u'')
@@ -246,8 +249,8 @@ class Event(object):
         self.trusted_exe = to_unicode(trusted_exe)
         self.trusted_cmdline = to_unicode(trusted_cmdline)
 
-        self._timereported = self.make_arrow_datetime(timereported)
-        self._timegenerated = self.make_arrow_datetime(timegenerated)
+        self._timegenerated = Arrow.utcnow() if timegenerated is None else self.make_arrow_datetime(timegenerated)
+        self._timereported = self._timegenerated if timereported is None else self.make_arrow_datetime(timereported)
         self._timehmac = self.make_arrow_datetime(timehmac)
 
         self.custom_fields = custom_fields if custom_fields else dict()
@@ -256,16 +259,15 @@ class Event(object):
 
         self._parse_trusted()
         self.generate_uuid()
-        self._generate_time()
         self.relp_id = None
 
     @property
     def timegenerated(self):
-        return None if self._timegenerated is None else self._timegenerated.datetime
+        return self._timegenerated.datetime
 
     @property
     def timereported(self):
-        return None if self._timereported is None else self._timereported.datetime
+        return self._timereported.datetime
 
     @property
     def timehmac(self):
@@ -287,17 +289,9 @@ class Event(object):
         digest.update(self.app_name.encode("utf-8"))
         digest.update(self.source.encode("utf-8"))
         digest.update(self.message.encode("utf-8"))
-        if self._timereported is not None:
-            digest.update(str(self._timereported.to('utc')))
+        digest.update(str(self._timereported.to('utc')))
         self.uuid = b64encode(digest.digest())
         return self.uuid
-
-    def _generate_time(self):
-        """
-        If the event hasn't got a timegenerated field, give the current timestamp
-        """
-        if self._timegenerated is None:
-            self._timegenerated = Arrow.utcnow()
 
     def __hash__(self):
         return hash(self.uuid)
@@ -305,18 +299,26 @@ class Event(object):
     def __eq__(self, other):
         """
         Two events are equal if they have the same UUID
+
+        :type other: Event
         :rtype: bool
         """
-        return self.uuid == other.uuid
-
-    def __cmp__(self, other):
-        """
-        Compare two events by their "first seen" time
-        :rtype: int
-        """
         if self.uuid == other.uuid:
-            return 0
-        return cmp(self._timegenerated, other.timegenerated)
+            return self.message == other.message and self._timereported == other._timereported and \
+                   self.severity == other.severity and self.facility == other.facility and \
+                   self.app_name == other.app_name and self.source == other.source
+        return False
+
+    def __lt__(self, other):
+        """
+        self < other if self.timereported < other.timereported
+
+        :type other: Event
+        :rtype: bool
+        """
+        if self == other:
+            return False
+        return self._timereported < other._timereported
 
     def _hmac(self):
         h = hmac_func.HMAC(self.HMAC_KEY, hashes.SHA256(), backend=default_backend())
@@ -326,8 +328,7 @@ class Event(object):
         h.update(self.app_name.encode("utf-8"))
         h.update(self.source.encode("utf-8"))
         h.update(self.message.encode("utf-8"))
-        if self._timereported is not None:
-            h.update(str(self._timereported))
+        h.update(str(self._timereported.to('utc')))
         h.update(str(self._timehmac))
         return h
 
@@ -335,6 +336,9 @@ class Event(object):
         """
         Generate a HMAC from the fields: severity, facility, app_name, source, message, timereported
 
+        :param verify: if True and the event already has a HMAC, the existing HMAC will be verified instead of
+        generating a new HMAC
+        :type verify: bool
         :return: a base 64 encoded HMAC
         :rtype: str
         :raise InvalidSignature: if HMAC already exists but is invalid
@@ -411,6 +415,7 @@ class Event(object):
     def __setitem__(self, key, value):
         """
         Sets a custom field
+
         :param key: custom field key
         :type key: str
         :param value: custom field value
@@ -487,7 +492,9 @@ class Event(object):
         Parse a rfc5424 string into an Event
 
         :param s: string event
-        :return: Event
+        :type s: str
+        :return: the new Event
+        :rtype: Event
         """
         match_obj = REGEXP_SYSLOG23.match(s)
         if match_obj is None:
@@ -522,7 +529,9 @@ class Event(object):
         Parse a rfc3164 string into an Event
 
         :param s: string event
-        :return: Event
+        :type s: str
+        :return: the new Event
+        :rtype: Event
         """
         match_obj = REGEXP_SYSLOG.match(s)
         if match_obj is None:
@@ -555,6 +564,7 @@ class Event(object):
         and RFC 3164 events, or dictionnary events. It automatically detects the type, using regexp tests.
 
         :param s: string (JSON or RFC 5424 or RFC 3164) or dictionnary
+        :type s: str or dict
         :return: The parsed event
         :rtype: Event
         :raise `ParsingError`: if deserialization fails
@@ -576,9 +586,6 @@ class Event(object):
         """
         Parse some bytes into an :py:class:`pyloggr.event.Event` object
 
-        Note
-        ====
-        We generate a HMAC for this new event. If the event already has a HMAC, we verify it
 
         :param bytes_ev: the event as bytes
         :type bytes_ev: bytes
@@ -586,7 +593,8 @@ class Event(object):
         :type hmac: bool
         :param json: whether bytes_ev is a JSON string (if not sure, you can keep False)
         :type json: bool
-        :return: Event object
+        :return: the new Event object
+        :rtype: Event
         :raise ParsingError: if bytes could not be parsed correctly
         :raise InvalidSignature: if `hmac` is True and a HMAC already exists, but is invalid
         """
@@ -608,6 +616,7 @@ class Event(object):
     def _load_json(cls, json_encoded):
         """
         :type json_encoded: str
+        :rtype: Event
         """
         try:
             d = ujson.loads(json_encoded)
@@ -617,12 +626,17 @@ class Event(object):
             return Event(**d)
 
     def dumps(self):
+        """
+        :rtype: str
+        """
         # instantiate a dedicate schema object to avoid thread safety issues
         return EventSchema().dumps(self).data
 
     def dumps_elastic(self):
         """
         Dumps in JSON suited for Elasticsearch
+
+        :rtype: str
         """
         # instantiate a dedicate schema object to avoid thread safety issues
         deserialized, errors = EventSchema().dump(self)
@@ -631,10 +645,16 @@ class Event(object):
         return ujson.dumps(deserialized)
 
     def dump(self):
+        """
+        :rtype: dict
+        """
         # instantiate a dedicate schema object to avoid thread safety issues
         return EventSchema().dump(self).data
 
     def dump_sql(self, cursor):
+        """
+        :rtype: str
+        """
         d = self.dump()
         d['tags'] = self.tags
         d['custom_fields'] = Json(self.custom_fields)
