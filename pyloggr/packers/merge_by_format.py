@@ -84,8 +84,7 @@ class PackerByFormat(BasePacker):
         if len(queue) == 0:
             if self.formatters.apply(event):
                 # the event matches start_format: store it in the empty queue
-                have_been_published_future = queue.append(event)
-                status = yield have_been_published_future
+                status = yield queue.append(event)
                 raise Return((status, event))
             else:
                 # we don't have any event in queue, and the current event is not a "start event"
@@ -107,6 +106,5 @@ class PackerByFormat(BasePacker):
             raise Return((status, event))
         else:
             # the current event is not a start event, we just append it to the queue
-            have_been_published_future = queue.append(event)
-            status = yield have_been_published_future
+            status = yield queue.append(event)
             raise Return((status, event))
