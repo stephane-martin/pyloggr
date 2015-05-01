@@ -159,7 +159,7 @@ class Event(object):
     @staticmethod
     def make_severity(severity):
         if not severity:
-            return SEVERITY[5]
+            return u'notice'
         try:
             # from encoded priority
             return SEVERITY.get(int(severity) & 7, u'')
@@ -168,7 +168,7 @@ class Event(object):
         severity = to_unicode(severity)
         if severity in SEVERITY_VALUES:
             return severity
-        return SEVERITY.get(severity.lower(), u'')
+        return SEVERITY.get(severity.lower(), u'notice')
 
     @staticmethod
     def make_facility(facility):
@@ -182,7 +182,7 @@ class Event(object):
         facility = to_unicode(facility)
         if facility in FACILITY_VALUES:
             return facility
-        return SEVERITY.get(facility.lower(), u'')
+        return FACILITY.get(facility.lower(), u'')
 
     @staticmethod
     def make_arrow_datetime(dt):
