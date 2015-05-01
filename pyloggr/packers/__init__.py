@@ -120,7 +120,7 @@ class PackerQueue(list):
         status, ev = yield self.publisher.publish_event(merged_event)
 
         # notify that all the events that are stored in this queue have been published
-        for event in self:
+        for event in copy_of_queue:
             event.have_been_published.set_result(status)
 
     def append(self, event):
