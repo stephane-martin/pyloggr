@@ -31,10 +31,10 @@ cdef unicode guess_bytes(bytes bstring):
 cpdef unicode to_unicode(s):
     if type(s) is unicode:
         return <unicode>s
-    if type(s) is int:
-        return unicode(s)
     if isinstance(s, bytes):
         return guess_bytes(<bytes>s)
+    if type(s) is int or type(s) is float:
+        return u'{}'.format(s)
     if isinstance(s, unicode):
-        return unicode(s)
+        return <unicode>s
     return u''
