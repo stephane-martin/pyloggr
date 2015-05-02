@@ -6,16 +6,19 @@ cdef bytes byte_lf = b'\n'
 
 
 cdef unicode guess_bytes(bytes bstring):
-    if len(bstring) == 0:
+    l = len(bstring)
+    if l == 0:
         return u''
     if bstring[0] == b'\xfe':
-        if len(bstring) > 1:
-            if bstring[1] == b'\xff':
-                return bstring.decode('utf-16')
+        if l == 1:
+            return u'þ'
+        elif bstring[1] == b'\xff':
+            return bstring.decode('utf-16')
     if bstring[0] == b'\xff':
-        if len(bstring) > 1:
-            if bstring[1] == b'\xfe':
-                return bstring.decode('utf-16')
+        if l == 1:
+            return u'ÿ'
+        elif bstring[1] == b'\xfe':
+            return bstring.decode('utf-16')
     try:
         return bstring.decode('utf-8')
     except UnicodeDecodeError:
@@ -37,4 +40,4 @@ cpdef unicode to_unicode(s):
         return u'{}'.format(s)
     if isinstance(s, unicode):
         return <unicode>s
-    return u''
+    return u''      # None falls here
