@@ -96,7 +96,7 @@ class Publisher(object):
             on_open_callback=on_connect_open,
             on_open_error_callback=on_connect_error,
             on_close_callback=None,
-            custom_ioloop=IOLoop.instance(),
+            custom_ioloop=IOLoop.current(),
             stop_ioloop_on_close=False,
         )
 
@@ -191,7 +191,7 @@ class Publisher(object):
         raise Return(res)
 
     @coroutine
-    def publish_event(self, event):
+    def publish_event(self, event, routing_key=''):
         """
         publish_event(exchange, event, routing_key='', persistent=True)
         Publish an Event object in RabbitMQ
@@ -208,7 +208,7 @@ class Publisher(object):
         result = yield self.publish(
             exchange=self.rabbitmq_config.exchange,
             body=json_event,
-            routing_key=self.base_routing_key,
+            routing_key=routing_key,
             message_id=event.uuid,
             persistent=True
         )

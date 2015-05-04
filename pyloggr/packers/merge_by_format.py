@@ -70,12 +70,18 @@ class PackerByFormat(BasePacker):
         """
         super(PackerByFormat, self).__init__(publisher, queue_max_age)
         self.formatters = Formatters(start_formats)
-        # only one queue with PackerByFormat
-        self.queues[0] = PackerQueue(publisher)
 
     @coroutine
-    def publish_event(self, event):
-        queue = self.queues[0]
+    def publish_event(self, event, routing_key):
+        """
+        Publish the event, after merging if necessary
+
+        :param event: the event to publish
+        :type event: pyloggr.event.Event
+        """
+        h = hash(event.source)
+        self.queues[h] = self.queues[h] if h in self.queues else PackerQueue(self.publisher, routing_key)
+        queue = self.queues[h]
 
         if self.shutting_down:
             # the packer is shutting down, so it doesn't accept any more event
@@ -89,7 +95,7 @@ class PackerByFormat(BasePacker):
             else:
                 # we don't have any event in queue, and the current event is not a "start event"
                 # so we just publish it...
-                status = yield self.publisher.publish_event(event)
+                status = yield self.publisher.publish_event(event, routing_key)
                 raise Return((status, event))
 
         # we have a previous start event in queue
@@ -100,7 +106,7 @@ class PackerByFormat(BasePacker):
             # store the current event in the emptied queue
             have_been_published_future = queue.append(event)
             # publish the previous queue
-            IOLoop.instance().add_callback(copy_of_queue.publish)
+            IOLoop.current().add_callback(copy_of_queue.publish)
             # wait that event has been published
             status = yield have_been_published_future
             raise Return((status, event))

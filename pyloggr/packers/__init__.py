@@ -83,20 +83,21 @@ def merge_events(list_of_events):
     merged_event.generate_uuid(overwrite=True)
     # generate a new HMAC if needed
     if any(event.hmac for event in unique_events):
-        merged_event.generate_hmac(verify=False)
+        merged_event.generate_hmac(verify_if_exists=False)
 
     return merged_event
 
 
 class PackerQueue(list):
-    def __init__(self, publisher, i=None):
+    def __init__(self, publisher, routing_key, i=None):
         i = [] if i is None else i
         super(PackerQueue, self).__init__(i)
         self.publisher = publisher
+        self.routing_key = routing_key
         self.last_action = Arrow.utcnow()
 
     def copy_and_void(self):
-        q = PackerQueue(self.publisher, i=self)
+        q = PackerQueue(self.publisher, self.routing_key, i=self)
         self[:] = []
         self.last_action = Arrow.utcnow()
         return q
@@ -117,7 +118,7 @@ class PackerQueue(list):
             merged_event = merge_events(copy_of_queue)
 
         # publish the merged event to the next publisher
-        status, ev = yield self.publisher.publish_event(merged_event)
+        status, ev = yield self.publisher.publish_event(merged_event, self.routing_key)
 
         # notify that all the events that are stored in this queue have been published
         for event in copy_of_queue:
@@ -143,10 +144,12 @@ class BasePacker(object):
         self.periodic = PeriodicCallback(self.flush, max(self.queue_max_age, 2000))
         self.periodic.start()
 
-    def publish_event(self, event):
+    def publish_event(self, event, routing_key):
         raise NotImplementedError
 
     def shutdown(self):
+        if self.shutting_down:
+            return
         self.shutting_down = True
         # notify the next packer
         if isinstance(self.publisher, BasePacker):

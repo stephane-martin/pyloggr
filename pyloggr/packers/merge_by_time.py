@@ -32,7 +32,7 @@ class PackerByTime(BasePacker):
         self.merge_event_window = int(merge_event_window)
 
     @coroutine
-    def publish_event(self, event):
+    def publish_event(self, event, routing_key):
         """
         Publish an event to RabbitMQ, after having merged it with similar events.
 
@@ -46,7 +46,7 @@ class PackerByTime(BasePacker):
 
         if event.timereported is None:
             # we don't know when the event was emitted, so we just publish it
-            status = yield self.publisher.publish_event(event)
+            status = yield self.publisher.publish_event(event, routing_key)
             raise Return((status, event))
 
         # separate events using (source, facility, app_name)
@@ -57,7 +57,7 @@ class PackerByTime(BasePacker):
         key = key.digest()
 
         if key not in self.queues:
-            self.queues[key] = PackerQueue(self.publisher)
+            self.queues[key] = PackerQueue(self.publisher, routing_key)
         queue = self.queues[key]
 
         if len(queue) == 0:
@@ -73,7 +73,7 @@ class PackerByTime(BasePacker):
             # the last event was emitted too late: publish and empty the queue
             copy_of_queue = queue.copy_and_void()
             has_been_published = queue.append(event)
-            IOLoop.instance().add_callback(copy_of_queue.publish)
+            IOLoop.current().add_callback(copy_of_queue.publish)
         else:
             has_been_published = queue.append(event)
 
