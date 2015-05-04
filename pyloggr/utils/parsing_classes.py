@@ -481,8 +481,6 @@ open_acc        = Literal('{')
 close_par       = Literal(')')
 close_acc       = Literal('}')
 
-# todo:
-
 open_delim      = Suppress(open_par | open_acc)
 close_delim     = Suppress(close_par | close_acc)
 
