@@ -19,7 +19,7 @@ from pyloggr.utils.constants import FACILITY, SEVERITY
 
 
 class RabbitMQBaseSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     host = fields.String(required=True)
@@ -89,7 +89,7 @@ class NotificationsConfig(RabbitMQBaseConfig):
 
 
 class PostgresqlSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     host = fields.String(required=True)
@@ -123,7 +123,7 @@ class PostgresqlConfig(object):
 
 
 class RedisSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     config_file = fields.String(default=u'/usr/local/etc/redis.conf')
@@ -148,7 +148,7 @@ class RedisConfig(object):
 
 
 class SSLSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     certfile = fields.String(required=True)
@@ -171,7 +171,7 @@ class SSLConfig(object):
 
 
 class LoggingSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     security = fields.String(default=u"~/logs/pyloggr.security.log")
@@ -198,7 +198,7 @@ class LoggingConfig(object):
 
 
 class SyslogServerSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     name = fields.String(required=True)
@@ -231,7 +231,7 @@ class SyslogServerConfig(object):
 
 
 class SyslogSchema(Schema):
-    class Meta:
+    class Meta(object):
         strict = True
 
     servers = fields.Nested(SyslogServerSchema, allow_null=False, many=True)
@@ -479,16 +479,15 @@ def set_configuration(configuration_directory):
     # read packers_config and inject it in Config.SYSLOG.servers and Config.HARVEST.directories
     from pyloggr.packers.build_packers_config import parse_config_file
     packers_config = parse_config_file(join(configuration_directory, 'packers_config'))
-    # Config.SYSLOG.servers ...
+    # in Config.SYSLOG.servers ...
     syslog_servers_with_packers = [server for server in Config.SYSLOG.servers.values() if server.packer_groups]
     for syslog_server in syslog_servers_with_packers:
         syslog_server.packer_groups = [
             packers_config[packer_group_name] for packer_group_name in syslog_server.packer_groups
         ]
-    # Config.HARVEST.directories ...
+    # in Config.HARVEST.directories ...
     harvest_directories_with_packers = [
         directory_obj for directory_obj in Config.HARVEST.directories.values() if directory_obj.packer_group
     ]
     for directory_obj in harvest_directories_with_packers:
         directory_obj.packer_group = packers_config[directory_obj.packer_group]
-
