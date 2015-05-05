@@ -79,13 +79,17 @@ class PackerByFormat(BasePacker):
         :param event: the event to publish
         :type event: pyloggr.event.Event
         """
-        h = hash(event.source)
-        self.queues[h] = self.queues[h] if h in self.queues else PackerQueue(self.publisher, routing_key)
-        queue = self.queues[h]
 
         if self.shutting_down:
             # the packer is shutting down, so it doesn't accept any more event
             raise Return((False, event))
+
+        h = hash(event.source)
+        if h not in self.queues:
+            self.queues[h] = PackerQueue(self.publisher, routing_key)
+        queue = self.queues[h]
+
+
 
         if len(queue) == 0:
             if self.formatters.apply(event):
