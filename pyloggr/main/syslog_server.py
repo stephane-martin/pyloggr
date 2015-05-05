@@ -14,12 +14,12 @@ import uuid
 import errno
 from os.path import expanduser
 import threading
-import queue
 from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop
 from tornado.tcpserver import TCPServer
 from tornado.netutil import bind_unix_socket, ssl_wrap_socket, errno_from_exception, bind_sockets
 from tornado.iostream import SSLIOStream, StreamClosedError
+from tornado.concurrent import Future
 # noinspection PyPackageRequirements,PyCompatibility
 from past.builtins import basestring as basestr
 import ujson
@@ -28,14 +28,14 @@ from pyloggr.event import Event, ParsingError
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.config import SyslogServerConfig, Config
 from pyloggr.utils import sleep
-from pyloggr.utils.observable import NotificationProducer
+from pyloggr.utils.simple_queue import ThreadSafeQueue11
 from pyloggr.cache import cache
 
 logger = logging.getLogger(__name__)
 security_logger = logging.getLogger('security')
 
 
-class ListOfClients(NotificationProducer):
+class ListOfClients(object):
     """
     Stores the current Syslog clients, sends notifications to observers, publishes the list of clients in Redis
     """
@@ -60,9 +60,10 @@ class ListOfClients(NotificationProducer):
         """
         self._clients[client_id] = client
         cache.syslog_list[self.server_id].clients = self
-        d = {'action': 'add_client'}
-        d.update(client.props)
+
         if publications:
+            d = {'action': 'add_client'}
+            d.update(client.props)
             publications.notify_observers(d, 'pyloggr.syslog.clients')
 
     def remove(self, client_id):
@@ -101,36 +102,60 @@ class Publications(object):
         self.rabbitmq_config = rabbitmq_config
         self.publisher = None
         self.syslog_servers_conf = syslog_servers_conf
-        self.publication_ioloop = None
-        self.publication_queue = queue.Queue()
-        self.notifications_queue = queue.Queue()
-        self.publication_thread = threading.Thread(target=self.publication_init_thread)
-        self.shutting_down = threading.Event()
-        self.servers = {}
-        self.rabbitmq_status = threading.Event()
+        self._publication_queue = ThreadSafeQueue11()
+        self._notifications_queue = ThreadSafeQueue11()
+        self._publication_thread = threading.Thread(target=self.publication_init_thread)
+        self._shutting_down = threading.Event()
+        self._rabbitmq_status = threading.Event()
+        self.packer_groups = {}
+
+    def start(self):
+        self._publication_thread.start()
+
+    def rabbitmq_status(self):
+        return self._rabbitmq_status.is_set()
 
     def publication_init_thread(self):
         # make a specific IOLoop in this thread for RabbitMQ publishing
         self.publication_ioloop = IOLoop()
         self.publication_ioloop.make_current()
-        self.publication_ioloop.add_callback(self.start)
+        self.publication_ioloop.add_callback(self._do_start)
         self.publication_ioloop.start()
+        # when the publication_ioloop will be stopped by 'shutdown', previous start() will return, and the
+        # thread will terminate
 
     @coroutine
-    def start(self):
-        lost_rabbit_connection = yield self.connect_to_rabbit()
-        IOLoop.current().add_callback(self.publication_loop)
-        list_of_clients.register_queue(self.publisher)
+    def _do_start(self):
+        lost_rabbit_connection = yield self._connect_to_rabbit()
+        if lost_rabbit_connection is None:
+            self.publication_ioloop.stop()
+            return
+        IOLoop.current().add_callback(self._wait_for_messages)
         yield lost_rabbit_connection.wait()
         # if we get here, it means we lost rabbitmq
-        self.rabbitmq_status.clear()
-        list_of_clients.unregister_queue()
+        self._rabbitmq_status.clear()
+
+    def shutdown(self):
+        # can be called by any thread
+        if not self._shutting_down.is_set():
+            self._shutting_down.set()
 
     def notify_observers(self, d, routing_key=''):
-        self.notifications_queue.put((d, routing_key))
+        if self._rabbitmq_status.is_set() and not self._shutting_down.is_set():
+            self._notifications_queue.put((d, routing_key))
+            return True
+        else:
+            return False
+
+    def publish_syslog_message(self, protocol, server_port, client_host, bytes_event, client_id, relp_id=None):
+        if self._rabbitmq_status.is_set() and not self._shutting_down.is_set():
+            self._publication_queue.put((protocol, server_port, client_host, bytes_event, client_id, relp_id))
+            return True
+        else:
+            return False
 
     @coroutine
-    def connect_to_rabbit(self):
+    def _connect_to_rabbit(self):
         rabbit_close_ev = None
         self.publisher = Publisher(self.rabbitmq_config)
         while True:
@@ -139,12 +164,14 @@ class Publications(object):
             except RabbitMQConnectionError:
                 logger.error("local thread: can't connect to RabbitMQ")
                 yield sleep(Config.SLEEP_TIME)
+                if self._shutting_down.is_set():
+                    return
             else:
                 break
-        self.rabbitmq_status.set()
+        self._rabbitmq_status.set()
         raise Return(rabbit_close_ev)
 
-    def initialize_packers(self):
+    def _initialize_packers(self):
         for server in self.syslog_servers_conf:
             new_packer_groups = []
             for packer_group in server.packer_groups:
@@ -153,10 +180,10 @@ class Publications(object):
                     current_publisher = packer_partial(current_publisher)
                 new_packer_groups.append((packer_group.condition, current_publisher))
             for port in server.ports:
-                self.servers[str(port)] = new_packer_groups
+                self.packer_groups[str(port)] = new_packer_groups
 
-    def _publish(self, message):
-        tcp_or_relp, server_port, client_host, bytes_event, relp_id, client = message
+    def _do_publish_syslog(self, message):
+        protocol, server_port, client_host, bytes_event, client_id, relp_id  = message
         try:
             event = Event.parse_bytes_to_event(bytes_event, hmac=True)
         except ParsingError as ex:
@@ -165,71 +192,94 @@ class Publications(object):
                 logger.warning(bytes_event)
                 return
             else:
-                IOLoop.instance().add_callback(client.disconnect)
+                IOLoop.instance().add_callback(list_of_clients[client_id].disconnect)
                 return
 
         event.relp_id = relp_id
         event['syslog_server_port'] = server_port
         event['syslog_client_host'] = client_host
-        event['syslog_protocol'] = tcp_or_relp
+        event['syslog_protocol'] = protocol
 
         # pick the right publisher/packer
-        chosen_publisher = self.publisher
-        for condition, publisher in self.servers[str(server_port)]:
-            if condition is None:
-                chosen_publisher = publisher
-            elif condition.eval(event):
-                chosen_publisher = publisher
-                break
+        early_fails = False
+        if self.publisher is None:
+            early_fails = True
+        else:
+            chosen_publisher = self.publisher
+            for condition, publisher in self.packer_groups[str(server_port)]:
+                if condition is None:
+                    chosen_publisher = publisher
+                    break
+                elif condition.eval(event):
+                    chosen_publisher = publisher
+                    break
 
-        future = chosen_publisher.publish_event(event, 'pyloggr.syslog.{}'.format(server_port))
-        future.tcp_or_relp = tcp_or_relp
-        future.client = client
-        IOLoop.current().add_future(future, self.after_published)
+            if self._rabbitmq_status.is_set():
+                future = chosen_publisher.publish_event(event, 'pyloggr.syslog.{}'.format(server_port))
+                future.protocol = protocol
+                future.client_id = client_id
+                IOLoop.current().add_future(future, self._after_published)
+            else:
+                early_fails = True
 
-    def _publish_notification(self, message):
+        if early_fails:
+            # don't even try to publish to rabbit, but notify the syslog client
+            future = Future()
+            future.set_result((False, event))
+            self._after_published(future)
+
+    def _do_publish_notification(self, message):
         d, routing_key = message
         json_message = ujson.dumps(d)
-        IOLoop.current().add_callback(
-            self.publisher.publish,
-            exchange='pyloggr.pubsub',
-            body=json_message,
-            routing_key=routing_key,
-            persistent=False
-        )
+        if self.publisher is not None and self._rabbitmq_status.is_set():
+            IOLoop.current().add_callback(
+                self.publisher.publish,
+                exchange='pyloggr.pubsub',
+                body=json_message,
+                routing_key=routing_key,
+                persistent=False
+            )
 
     @coroutine
-    def publication_loop(self):
-        self.initialize_packers()
-        while not self.shutting_down.is_set():
-            try:
-                message = self.publication_queue.get_nowait()
-            except queue.Empty:
-                try:
-                    message = self.notifications_queue.get_nowait()
-                except queue.Empty:
-                    yield sleep(1)
-                else:
-                    self._publish_notification(message)
-            else:
-                self._publish(message)
+    def _wait_for_messages(self):
+        self._initialize_packers()
+        while not self._shutting_down.is_set():
+            for syslog_message in self._publication_queue.get_all():
+                self._do_publish_syslog(syslog_message)
+            for notification_message in self._notifications_queue.get_all():
+                self._do_publish_notification(notification_message)
+            yield sleep(1)
 
-        if self.publisher:
-            yield self.publisher.stop()
-        for packer_groups in self.servers.values():
+        yield self._do_shutdown()
+
+    @coroutine
+    def _do_shutdown(self):
+        # notify the packers that they should not accept new stuff
+        for packer_groups in self.packer_groups.values():
             for _, packer in packer_groups:
                 packer.shutdown()
+        # shutdown the rabbitmq publisher
+        if self.publisher:
+            yield self.publisher.stop()     # yield returns when the rabbit connection is actually closed
+            self.publisher = None
+        # wait a bit so that 'publications' can finish its stuff
+        # noinspection PyUnresolvedReferences
+        if self.publication_ioloop._callbacks or self.publication_ioloop._timeouts:
+            yield sleep(2)
         self.publication_ioloop.stop()
 
-    def after_published(self, f):
+    @staticmethod
+    def _after_published(f):
         status, event = f.result()
+        client = list_of_clients[f.client_id]
         if event is None or status is None:
             return
         # give control back to main thread
-        if f.tcp_or_relp == "tcp":
-            IOLoop.instance().add_callback(f.client.after_published_tcp, status, event)
-        else:
-            IOLoop.instance().add_callback(f.client.after_published_relp, status, event)
+        protocol = f.protocol.lower()
+        if protocol == "tcp":
+            IOLoop.instance().add_callback(client.after_published_tcp, status, event=event)
+        elif protocol == "relp":
+            IOLoop.instance().add_callback(client.after_published_relp, status, event=event)
 
 publications = None
 
@@ -272,7 +322,6 @@ class SyslogClientConnection(object):
 
         self.disconnecting = threading.Event()
 
-
     @property
     def props(self):
         return {
@@ -295,58 +344,22 @@ class SyslogClientConnection(object):
         list_of_clients.remove(self.client_id)
         yield []
 
-    def _process_tcp_event(self, bytes_event):
-        """
-        _process_tcp_event(bytes_event)
-        Process a syslog/TCP event.
-
-        We got a Syslog event with TCP protocol. Event was transmitted via TCP, so the original
-        sender hasn't kept the event. We must take care that it is really published in RabbitMQ
-        or it will be lost!
-
-        :param bytes_event: the event as bytes
-        """
-        if len(bytes_event) > 0:
-            logger.info("Got an event from TCP client {}:{}".format(self.client_host, self.client_port))
-            self.nb_messages_received += 1
-            # put the bytes on the queue
-            publications.publication_queue.put(
-                ('tcp', self.server_port, self.client_host, bytes_event, None, self)
-            )
-
-    def after_published_tcp(self, status, event):
+    def after_published_tcp(self, status, event=None, bytes_event=None):
+        if event is None and bytes_event is None:
+            return
         if status:
             self.nb_messages_transmitted += 1
         else:
             logger.warning("RabbitMQ publisher said NACK :(")
-            if cache.rescue.append(event):
+            if cache.rescue.append(event, bytes_event):
                 logger.info("Published in RabbitMQ failed, but we pushed the event in the rescue queue")
             else:
                 logger.error("Failed to save event in redis. Event has been lost")
 
-    def _process_relp_event(self, bytes_event, relp_event_id):
-        """
-        _process_relp_event(bytes_event, relp_event_id)
-        Process a RELP event.
-
-        We have got a Syslog event in RELP transaction
-
-        :param bytes_event: the event as `bytes`
-        :param relp_event_id: event ID given by the RELP client
-
-        Note
-        ====
-        Tornado coroutine
-        """
-        if len(bytes_event) > 0:
-            logger.info("Got an event from RELP client {}:{}".format(self.client_host, self.client_port))
-            self.nb_messages_received += 1
-            publications.publication_queue.put(
-                ('relp', self.server_port, self.client_host, bytes_event, relp_event_id, self)
-            )
-
-    def after_published_relp(self, status, event):
-        relp_event_id = event.relp_id
+    def after_published_relp(self, status, event=None, relp_id=None):
+        if event is None and relp_id is None:
+            return
+        relp_event_id = event.relp_id if relp_id is None else relp_id
         if relp_event_id is None:
             return
         if status:
@@ -358,7 +371,33 @@ class SyslogClientConnection(object):
             )
             self.stream.write('{} rsp 6 500 KO\n'.format(relp_event_id))
 
-    @coroutine
+    def _process_event(self, bytes_event, protocol, relp_event_id=None):
+        """
+        _process_relp_event(bytes_event, relp_event_id)
+        Process a TCP syslog or RELP event.
+
+        :param bytes_event: the event as `bytes`
+        :param protocol: relp or tcp
+        :param relp_event_id: event RELP ID, given by the RELP client
+
+        Note
+        ====
+        Tornado coroutine
+        """
+        if bytes_event:
+            logger.info("Got an event from {} client {}:{}".format(protocol, self.client_host, self.client_port))
+            self.nb_messages_received += 1
+            accepted = publications.publish_syslog_message(
+                protocol, self.server_port, self.client_host, bytes_event, self.client_id, relp_event_id
+            )
+            if not accepted:
+                protocol = protocol.lower()
+                # message was refused by 'publications' because rabbitmq is not available
+                if protocol == 'tcp':
+                    self.after_published_tcp(False, bytes_event=bytes_event)
+                elif protocol == 'relp':
+                    self.after_published_relp(False, relp_id=relp_event_id)
+
     def _process_relp_command(self, relp_event_id, command, data):
         """
         _process_relp_command(relp_event_id, command, data)
@@ -367,10 +406,6 @@ class SyslogClientConnection(object):
         :param relp_event_id: RELP ID, sent by client
         :param command: the RELP command
         :param data: data transmitted after command (can be empty)
-
-        Note
-        ====
-        Tornado coroutine
         """
         if command == 'open':
             answer = '%s rsp %d 200 OK\n%s\n' % (relp_event_id, len(data) + 7, data)
@@ -379,7 +414,7 @@ class SyslogClientConnection(object):
             self.stream.write('{} rsp 0\n0 serverclose 0\n'.format(relp_event_id))
             self.disconnect()
         elif command == 'syslog':
-            self._process_relp_event(data.strip(b'\r\n '), relp_event_id)
+            self._process_event(data.strip(b'\r\n '), 'relp', relp_event_id)
         else:
             log_msg = "Unknown command '{}' from {}:{}".format(command, self.client_host, self.client_port)
             security_logger.warning(log_msg)
@@ -419,7 +454,7 @@ class SyslogClientConnection(object):
             SYSLOG-MSG is defined in the syslog protocol [RFC5424] and may also be considered to be the payload in [RFC3164]
         """
         try:
-            while True:
+            while not self.disconnecting.is_set():
                 first_token = yield self._read_next_token()
                 if first_token[0] == b'<':
                     # non-transparent framing
@@ -438,7 +473,7 @@ class SyslogClientConnection(object):
                         self.disconnect()
                         break
                     syslog_msg = yield self.stream.read_bytes(msg_len)
-                self._process_tcp_event(syslog_msg.strip(b' \r\n'))
+                self._process_event(syslog_msg.strip(b' \r\n'), 'tcp')
 
         except StreamClosedError:
             logger.info(u"TCP stream was closed {}:{}".format(self.client_host, self.client_port))
@@ -495,7 +530,7 @@ class SyslogClientConnection(object):
             CMDDATA = *OCTET ; semantics depend on original command
         """
         try:
-            while True:
+            while not self.disconnecting.is_set():
                 relp_event_id = yield self._read_next_token()
                 try:
                     relp_event_id = int(relp_event_id)
@@ -525,19 +560,15 @@ class SyslogClientConnection(object):
                 if length > 0:
                     data = yield self.stream.read_bytes(length)
                     data = data.strip(b' \r\n')
-                try:
-                    yield self._process_relp_command(relp_event_id, command, data)
-                except ParsingError:
-                    log_msg = u"RELP client '{}:{}' sent a malformed event. We disconnect it.".format(
-                        self.client_host, self.client_port
-                    )
-                    logger.warning(log_msg)
-                    security_logger.warning(log_msg)
-                    self.disconnect()
-                    break
+
+                self._process_relp_command(relp_event_id, command, data)
 
         except StreamClosedError:
             logger.info("Stream was closed {}:{}".format(self.client_host, self.client_port))
+            self.disconnect()
+        except ssl.SSLError:
+            logger.warning("Something bad happened in the TLS conversation")
+            security_logger.exception("Something bad happened in the TLS conversation")
             self.disconnect()
 
     @coroutine
@@ -588,8 +619,6 @@ class SyslogClientConnection(object):
             return
 
         self.server_port = server_port
-        # todo: problem, we modify the unique publisher
-        #self.publisher.base_routing_key = 'pyloggr.syslog.{}'.format(self.server_port)
 
         # notify that we have a new client
         list_of_clients.add(self.client_id, self)
@@ -604,14 +633,16 @@ class SyslogClientConnection(object):
         """
         Disconnects the client
         """
-        self.stream.close()
-        list_of_clients.remove(self.client_id)
-        self.disconnecting.set()
+        if not self.disconnecting.is_set():
+            self.disconnecting.set()
+            if not self.stream.closed():
+                self.stream.close()
+            list_of_clients.remove(self.client_id)
 
 
 class SyslogParameters(object):
     """
-    Encapsulates the syslog server configuration
+    Encapsulates the syslog configuration
     """
     def __init__(self, conf):
         """
@@ -621,31 +652,30 @@ class SyslogParameters(object):
         # todo: simplify the mess
         self.conf = conf
         self.list_of_sockets = None
-        port_to_protocol = {}
-        unix_socket_names = []
+        self.port_to_protocol = {}
+        self.unix_socket_names = []
+        self.port_to_ssl_config = {}
 
         for server in conf.servers.values():
             assert(isinstance(server, SyslogServerConfig))
             if server.stype == 'unix':
-                unix_socket_names.append(server.socketname)
-                port_to_protocol[server.socketname] = 'socket'
+                self.unix_socket_names.append(server.socketname)
+                self.port_to_protocol[server.socketname] = 'socket'
             else:
                 for port in server.ports:
-                    port_to_protocol[port] = server.stype
+                    self.port_to_protocol[port] = server.stype
 
-        self.port_to_protocol = port_to_protocol
-        self.unix_socket_names = unix_socket_names
         self.ssl_ports = list(
             chain.from_iterable([server.ports for server in conf.servers.values() if server.ssl is not None])
         )
-        port_to_ssl_config = {}
+
         for port in self.ssl_ports:
-            port_to_ssl_config[port] = [server.ssl for server in conf.servers.values() if port in server.ports][0]
-        self.port_to_ssl_config = port_to_ssl_config
+            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers.values() if port in server.ports][0]
 
     def bind_all_sockets(self):
         """
         Bind the sockets to the current server
+
         :return: list of bound sockets
         :rtype: list
         """
@@ -669,7 +699,7 @@ class SyslogParameters(object):
         return self.list_of_sockets
 
 
-class SyslogServer(TCPServer, NotificationProducer):
+class SyslogServer(TCPServer):
     """
     Tornado syslog server
 
@@ -686,7 +716,6 @@ class SyslogServer(TCPServer, NotificationProducer):
         :type server_id: int
         """
         TCPServer.__init__(self)
-        NotificationProducer.__init__(self)
 
         self.rabbitmq_config = rabbitmq_config
         self.syslog_parameters = syslog_parameters
@@ -717,19 +746,16 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         global publications
         publications = Publications(self.syslog_parameters.conf.servers.values(), self.rabbitmq_config)
-        publications.publication_thread.start()
+        publications.start()
 
-        while not publications.rabbitmq_status.is_set():
+        while not publications.rabbitmq_status():
             yield sleep(1)
-
-        #self.register_queue(self.publisher)
 
         yield self._start_syslog()
 
-        while publications.rabbitmq_status.is_set():
+        while publications.rabbitmq_status():
             yield sleep(1)
 
-        #self.unregister_queue()
         yield self.stop_all()
         yield sleep(Config.SLEEP_TIME)
         if not self.shutting_down:
@@ -794,7 +820,7 @@ class SyslogServer(TCPServer, NotificationProducer):
             self.listening = False
             logger.info("Closing RELP clients connections")
             for client in list_of_clients.values():
-                client.stream.close()
+                client.disconnect()
             logger.info("Stopping the RELP server")
             self.stop()
             cache.syslog_list[self.server_id].status = False
@@ -816,7 +842,6 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         yield self._stop_syslog()
         del cache.syslog_list[self.server_id]
-
         self._reset()
 
     @coroutine
@@ -826,8 +851,10 @@ class SyslogServer(TCPServer, NotificationProducer):
         """
         self.shutting_down = True
         if publications:
-            publications.shutting_down.set()
+            publications.shutdown()
         yield self.stop_all()
+        if publications:
+            publications.publication_ioloop.stop()
 
     def _handle_connection(self, connection, address):
         """
