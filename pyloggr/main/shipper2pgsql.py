@@ -5,18 +5,18 @@ import logging
 
 from tornado.gen import coroutine
 from tornado.ioloop import PeriodicCallback, IOLoop
+# noinspection PyCompatibility
 from concurrent.futures import ThreadPoolExecutor
 from psycopg2.pool import ThreadedConnectionPool, PoolError
 import psycopg2
 from sortedcontainers import SortedSet
-from toro import Empty
 
 from ..utils.constants import SQL_INSERT_QUERY, SQL_COLUMNS_STR, D_COLUMNS
 from ..rabbitmq.consumer import Consumer
 from ..rabbitmq import RabbitMQConnectionError
 from ..event import Event, ParsingError, InvalidSignature
 from pyloggr.utils import sleep
-
+from pyloggr.utils.simple_queue import Empty
 
 logger = logging.getLogger(__name__)
 
@@ -137,16 +137,11 @@ class PostgresqlShipper(object):
             yield self.launch()
             return
 
-        msgs = list()
-        # todo: write less redundant code
         try:
-            for _ in range(size):
-                msgs.append(self.syslog_ev_queue.get_nowait())
+            msgs = self.syslog_ev_queue.get_all_nowait()
         except Empty:
-            pass
-
-        if not msgs:
             return
+
         logger.info("{} events to forward to PGSQL".format(len(msgs)))
 
         def flush_backthread(rabbitmq_messages, tablename):

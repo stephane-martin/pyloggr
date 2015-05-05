@@ -9,9 +9,10 @@ from pika.exceptions import ChannelClosed, ConnectionClosed
 from pika.adapters import TornadoConnection
 from tornado.ioloop import IOLoop
 from tornado.gen import coroutine, Future, chain_future, Task, Return
-from toro import Event, Queue
+from toro import Event
 
 from . import RabbitMQConnectionError
+from pyloggr.utils.simple_queue import SimpleToroQueue
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ class Consumer(object):
         logger.info("Channel to RabbitMQ consumer has been opened")
         self.channel = channel
         self.channel.add_on_close_callback(on_channel_closed)
-        self.message_queue = Queue()
+        self.message_queue = SimpleToroQueue()
         if getattr(self.rabbitmq_config, 'queue', None):
             # durable queue has already been declared
             queue_name = self.rabbitmq_config.queue
@@ -219,7 +220,7 @@ class Consumer(object):
         """
         Starts consuming messages from RabbitMQ
         :returns: a Toro message queue that stores the messages when they arrive
-        :rtype: Queue
+        :rtype: SimpleToroQueue
 
         Note
         ====
