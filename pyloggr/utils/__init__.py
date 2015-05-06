@@ -9,7 +9,7 @@ The `utils` subpackage provides various tools used by other packages.
 
 __author__ = 'stef'
 
-from os.path import join, exists
+from os.path import join, exists, isdir, expanduser, abspath
 import os
 from distutils.util import strtobool
 
@@ -50,10 +50,22 @@ def ask_question(question):
     return answer
 
 
-def directory_is_writeable(dname):
+def check_directory(dname):
     """
     Checks that directory `dname` exists (we create it if needed), is really a directory, and is writeable
+
     :param dname: directory name
-    :return: nothing
+    :return: absolute directory name
+    :rtype: str
     :raise OSError: when tests fail
     """
+    dname = abspath(expanduser(dname))
+    if exists(dname):
+        if not isdir(dname):
+            raise OSError("'{}' exists but is not a directory".format(dname))
+        if not os.access(dname, os.W_OK | os.X_OK):
+            raise OSError("'{}' is not writeable".format(dname))
+    else:
+        os.makedirs(dname)
+    return dname
+
