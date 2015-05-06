@@ -21,30 +21,26 @@ pyloggr using configuration item ``REDIS['try_spawn_redis'] = True``
 .. py:data:: cache
 
     Cache singleton
-
 """
-
 
 __author__ = 'stef'
 
 from tempfile import TemporaryFile
 import logging
 import time
-from io import open, BytesIO
 import os
-from os.path import exists, getsize
+from os.path import exists, join, isfile, basename, dirname
+import shutil
 
 from subprocess32 import Popen
 from redis import StrictRedis, RedisError
 from ujson import dumps, loads
-from future.builtins import str as text
-from future.builtins import bytes as p3bytes
-from lockfile import LockFile
 
 from pyloggr.config import Config
 from pyloggr.event import Event, InvalidSignature, ParsingError
 
 logger = logging.getLogger(__name__)
+security_logger = logging.getLogger('security')
 
 syslog_key = 'pyloggr.syslog.server.'
 rescue_key = 'pyloggr.rescue_queue'
@@ -77,6 +73,11 @@ class SyslogCache(object):
 
     @property
     def status(self):
+        """
+        Returns syslog process status
+
+        :returns: Boolean or None (if Redis not available)
+        """
         try:
             return self.redis_conn.hget(self.hash_name, 'status') == "True"
         except RedisError:
@@ -84,6 +85,12 @@ class SyslogCache(object):
 
     @status.setter
     def status(self, new_status):
+        """
+        Set one syslog process's status
+
+        :param new_status: True (running) or False (stopped)
+        :type new_status: bool
+        """
         try:
             if new_status:
                 self.redis_conn.sadd(syslog_key, self.server_id)
@@ -97,6 +104,11 @@ class SyslogCache(object):
 
     @property
     def clients(self):
+        """
+        Return the list of clients for this syslog process
+
+        :return: list of clients or None (Redis not available)
+        """
         if not self.status:
             return []
         try:
@@ -111,6 +123,12 @@ class SyslogCache(object):
 
     @clients.setter
     def clients(self, new_clients):
+        """
+        Sets the list of clients for this syslog process
+
+        :param new_clients: The list of clients
+        :type new_clients: list of :py:class:`pyloggr.main.syslog_server.SyslogClientConnection`
+        """
         try:
             if self.status:
                 if hasattr(new_clients, 'values'):
@@ -127,6 +145,9 @@ class SyslogCache(object):
     @property
     def ports(self):
         """
+        Return the list of ports that the syslog process listens on
+
+        :returns: list of ports (numeric and socket name)
         :rtype: list
         """
         if not self.status:
@@ -141,6 +162,9 @@ class SyslogCache(object):
     @ports.setter
     def ports(self, ports):
         """
+        Sets the list of ports that the syslog process listens on
+
+        :param ports: list of ports
         :type ports: list
         """
         try:
@@ -151,6 +175,16 @@ class SyslogCache(object):
 
 
 class SyslogServerList(object):
+    """
+    Encapsulates the list of syslog processes
+
+    Arguments
+    ---------
+    redis_conn: :py:class:`StrictRedis`
+        the Redis connection
+
+
+    """
     def __init__(self, redis_conn):
         """
         :type redis_conn: StrictRedis
@@ -160,6 +194,9 @@ class SyslogServerList(object):
 
     def __getitem__(self, server_id):
         """
+        Return a SyslogCache object based on process id
+
+        :param server_id: process id
         :rtype: SyslogCache
         """
         if server_id not in self._syslog_servers_dict:
@@ -170,6 +207,11 @@ class SyslogServerList(object):
         raise NotImplementedError
 
     def __delitem__(self, server_id):
+        """
+        Deletes a SyslogCache object (used when the syslog server shuts down)
+
+        :param server_id: process id
+        """
         hash_name = syslog_key + '_' + str(server_id)
         try:
             self.redis_conn.srem(syslog_key, server_id)
@@ -178,6 +220,12 @@ class SyslogServerList(object):
             pass
 
     def __len__(self):
+        """
+        Returns the number of syslog processes
+
+        :returns: how many syslog processes, or None (Redis not available)
+        :rtype: int
+        """
         try:
             return self.redis_conn.scard(syslog_key)
         except RedisError:
@@ -201,7 +249,7 @@ class SyslogServerList(object):
 
 class Cache(object):
     """
-    Cache class abstracts storage and retrieval from redis.
+    `Cache` class abstracts storage and retrieval from Redis
 
     Attributes
     ----------
@@ -229,6 +277,7 @@ class Cache(object):
             cls.redis_conn.ping()
         except RedisError:
             if Config.REDIS.try_spawn_redis:
+                # spawn a Redis server
                 cls._temp_redis_output_file = TemporaryFile()
                 try:
                     logger.info("Try to launch Redis instance")
@@ -265,6 +314,9 @@ class Cache(object):
 
     @classmethod
     def shutdown(cls):
+        """
+        Shutdowns the Redis cache. If a Redis server was spawned, shutdowns it.
+        """
         if cls.redis_child is None:
             return
         try:
@@ -284,6 +336,12 @@ class Cache(object):
 
     @property
     def available(self):
+        """
+        Tests if Redis is available
+
+        :return: True if available
+        :rtype: bool
+        """
         try:
             self.redis_conn.ping()
         except (RedisError, AttributeError):
@@ -292,6 +350,9 @@ class Cache(object):
 
 
 class RescueQueue(object):
+    """
+
+    """
     def __init__(self, redis_conn):
         """
         :type redis_conn: StrictRedis
@@ -299,110 +360,162 @@ class RescueQueue(object):
         self.redis_conn = redis_conn
 
     @staticmethod
-    def store_event_on_fs(bytes_event):
-        # acquire lock so that only this process can write to rescue file
-        with LockFile(Config.RESCUE_QUEUE_FNAME):
-            with open(Config.RESCUE_QUEUE_FNAME, mode='ab') as fhandle:
-                fhandle.write(str(len(bytes_event) + 1).zfill(10) + ' ' + bytes_event + '\n')
+    def _store_event_on_fs(event):
+        """
+        Store the given event in a file. Either parameter `event` or `bytes_event` should be given
 
-    def append(self, bytes_or_event):
-        if isinstance(bytes_or_event, p3bytes):
-            ev = Event.parse_bytes_to_event(bytes_or_event)
-        elif isinstance(bytes_or_event, text):
-            ev = Event.parse_bytes_to_event(bytes_or_event)
-        elif isinstance(bytes_or_event, Event):
-            # Event
-            ev = bytes_or_event
-        else:
-            logger.warning("RescueQueue.append: unknow type for bytes_or_event")
-            return False
+        :param event: the event
+        :type event: Event
+        :raise OSError: when some problem happens with FS operations
+        """
+
+        fname = join(Config.RESCUE_QUEUE_DIRNAME, "event_" + event.uuid)
+        if exists(fname):
+            # an event with same UUID has already been stored on FS
+            try:
+                event_on_fs = Event.from_file(fname)
+            except ParsingError:
+                logger.error("_store_event_on_fs: an existing event on FS is not parsable. We delete it")
+                try:
+                    os.remove(fname)
+                except OSError:
+                    logger.exception("_store_event_on_fs: Error while deleting existing event on FS. Abort.")
+                    raise
+            except OSError:
+                logger.exception("_store_event_on_fs: error while reading an existing event from FS. Abort.")
+                raise
+            except InvalidSignature:
+                moved_fname = join(dirname(fname), '_invalid_signature_' + basename(fname) + '_invalid_signature_')
+                security_logger.error(
+                    "_store_event_on_fs: an existing event on FS has an invalid signature. We move it to '{}'.".format(
+                        moved_fname
+                    )
+                )
+                try:
+                    shutil.move(fname, moved_fname)
+                except OSError:
+                    security_logger.exception("_store_event_on_fs: error while moving event. Abort.")
+                    raise
+            else:
+                if event_on_fs == event:
+                    return
+                if exists(fname):
+                    moved_fname = join(dirname(fname), '_duplicate_' + basename(fname) + '_duplicate_')
+                    logger.error(
+                        "_store_event_on_fs: a different event with same filename exists. We move it to '{}'".format(
+                            moved_fname
+                        )
+                    )
+                    try:
+                        shutil.move(fname, moved_fname)
+                    except OSError:
+                        logger.exception("_store_event_on_fs: error while moving event. Abort.")
+                        raise
         try:
-            ev.generate_hmac()
-        except InvalidSignature:
-            logger.error("RescueQueue.append: the given event already has an invalid signature")
-            return False
-        bytes_event = ev.dumps()
+            event.dumps(fname)
+        except OSError:
+            pass
+
+    def append(self, event=None, bytes_event=None):
+        """
+        Append an event to the rescue queue
+
+        :type event: pyloggr.event.Event
+        :return: True if the event has been successfully added to the rescue queue
+        """
+        if event is None and bytes_event is None:
+            return True
+        if bytes_event is None:
+            try:
+                event.verify_hmac()
+            except InvalidSignature:
+                security_logger.error("Append to cache: the given event has an invalid HMAC. Abort.")
+                return False
+            bytes_event = event.dumps()
+        if event is None:
+            try:
+                event = Event.parse_bytes_to_event(bytes_event, hmac=True)
+            except InvalidSignature:
+                security_logger.error("Append to cache: the given event has an invalid HMAC. Abort.")
+                return False
+            except ParsingError:
+                logger.error("Append to cache: the given event is not parsable. Abort.")
+                return False
         try:
             self.redis_conn.rpush(rescue_key, bytes_event)
         except RedisError:
             try:
-                self.store_event_on_fs(bytes_event)
+                self._store_event_on_fs(event)
                 return True
-            except:
-                logger.exception("Exception happened when cache tried to store event on FS")
+            except OSError:
                 return False
         return True
 
     def __len__(self):
-        redis_len = 0
         try:
             redis_len = self.redis_conn.llen(rescue_key)
         except RedisError:
-            pass
-
-        file_len = 0
-        if exists(Config.RESCUE_QUEUE_FNAME):
-            size = getsize(Config.RESCUE_QUEUE_FNAME)
-            if size > 0:
-                # rough estimate
-                file_len = max(1, size / 250)
-
-        return redis_len + file_len
-
-    @staticmethod
-    def bytes_to_event(bytes_event):
-        ev = None
+            logger.exception("Redis not available when reading RescueQueue length")
+            redis_len = 0
         try:
-            ev = Event.parse_bytes_to_event(bytes_event, hmac=True, json=True)
-        except InvalidSignature:
-            logger.error("Dropping one event from RescueQueue with invalid signature")
-        except ParsingError:
-            logger.warning("Dropping one event from RescueQueue because of ParsingError")
-        return ev
+            fnames = [join(Config.RESCUE_QUEUE_DIRNAME, fname) for fname in os.listdir(Config.RESCUE_QUEUE_DIRNAME)]
+            fnames = [fname for fname in fnames if isfile(fname) and basename(fname).startswith('event_')]
+        except OSError:
+            logger.exception("Exception happened when reading RescueQueue length")
+            fnames = []
+
+        return redis_len + len(fnames)
 
     @staticmethod
     def read_all_events_from_fs():
-        if not exists(Config.RESCUE_QUEUE_FNAME):
-            return []
-        with LockFile(Config.RESCUE_QUEUE_FNAME):
-            with open(Config.RESCUE_QUEUE_FNAME, mode='rb') as fhandle:
-                buf = BytesIO(fhandle.read())
-            os.remove(Config.RESCUE_QUEUE_FNAME)
-        bytes_events = []
-        while True:
+        fnames = [join(Config.RESCUE_QUEUE_DIRNAME, fname) for fname in os.listdir(Config.RESCUE_QUEUE_DIRNAME)]
+        fnames = [fname for fname in fnames if isfile(fname) and basename(fname).startswith('event_')]
+        events = []
+        for fname in fnames:
             try:
-                nb_bytes = int(buf.read(11))
-            except ValueError:
-                break
-            bytes_events.append(buf.read(nb_bytes))
-        buf.close()
-        return bytes_events
+                event = Event.from_file(fname)
+            except InvalidSignature:
+                security_logger.error("read_all_events_from_fs: dropping one FS event with invalid signature")
+            except ParsingError:
+                logger.error("read_all_events_from_fs: dropping one unparsable FS event")
+            except OSError:
+                logger.error("read_all_events_from_fs: error while reading event from FS")
+            else:
+                try:
+                    os.remove(fname)
+                except OSError:
+                    logger.error("read_all_events_from_fs: failed to delete '{}'".format(fname))
+                else:
+                    events.append(event)
+        return events
 
     def get_generator(self):
         while True:
             try:
                 bytes_event = self.redis_conn.lpop(rescue_key)
             except RedisError:
-                logger.warning("RedisError in RescueQueue.get_generator")
+                logger.warning("RescueQueue.get_generator: Redis not available")
                 # redis not available, next we check events on FS
                 break
             else:
                 if bytes_event is None:
                     # no more events in redis, next we check events on FS
                     break
-                event = self.bytes_to_event(bytes_event)
+                try:
+                    event = Event.parse_bytes_to_event(bytes_event, hmac=True, json=True)
+                except InvalidSignature:
+                    security_logger.error("get_generator: Dropping one event from Redis with invalid signature")
+                    event = None
+                except ParsingError:
+                    logger.error("get_generator: Dropping one unparsable event")
+                    event = None
                 if event:
                     yield event
 
         # now let's get events from FS
-        if not exists(Config.RESCUE_QUEUE_FNAME):
-            raise StopIteration
-        bytes_events = self.read_all_events_from_fs()
-        for bytes_event in bytes_events:
-            event = self.bytes_to_event(bytes_event)
-            if event is None:
-                continue
+
+        for event in self.read_all_events_from_fs():
             yield event
-        raise StopIteration
+
 
 cache = Cache()
