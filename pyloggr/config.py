@@ -5,16 +5,16 @@ Small hack to be able to import configuration from environment variable.
 
 __author__ = 'stef'
 
-import os
+from os.path import abspath, expanduser, dirname, join
 import logging
 import logging.config
-from os.path import dirname, exists, abspath, join, expanduser
 import ssl as ssl_module
 from base64 import b64decode
 
 from configobj import ConfigObj
 from marshmallow import Schema, fields
 
+from pyloggr.utils import check_directory
 from pyloggr.utils.constants import FACILITY, SEVERITY
 
 
@@ -302,7 +302,7 @@ class ConfigSchema(Schema):
     HMAC_KEY = fields.String(required=True)
     RABBITMQ_HTTP = fields.String(required=True)
     COOKIE_SECRET = fields.String(required=True)
-    PIDS_DIRECTORY = fields.String(default=u'/tmp/pids')
+    PIDS_DIRECTORY = fields.String(default=u'~/pids')
 
     POSTGRESQL = fields.Nested(PostgresqlSchema)
     NOTIFICATIONS = fields.Nested(NotificationsSchema)
@@ -314,7 +314,7 @@ class ConfigSchema(Schema):
     SYSLOG = fields.Nested(SyslogSchema)
     LOGGING_FILES = fields.Nested(LoggingSchema)
     HARVEST = fields.Nested(HarvestSchema)
-    RESCUE_QUEUE_FNAME = fields.String(default=u"~/rescue")
+    RESCUE_QUEUE_DIRNAME = fields.String(default=u"~/rescue")
 
     def make_object(self, data):
         return GlobalConfig(**data)
@@ -322,7 +322,7 @@ class ConfigSchema(Schema):
 config_slots = [
     'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 'SLEEP_TIME', 'NOTIFICATIONS', 'PARSER_CONSUMER',
     'PARSER_PUBLISHER', 'PGSQL_CONSUMER', 'SYSLOG_PUBLISHER', 'REDIS', 'SYSLOG', 'HMAC_KEY',
-    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST', 'RESCUE_QUEUE_FNAME'
+    'RABBITMQ_HTTP', 'POSTGRESQL', 'LOGGING_FILES', 'COOKIE_SECRET', 'PIDS_DIRECTORY', 'HARVEST', 'RESCUE_QUEUE_DIRNAME'
 ]
 
 
@@ -342,6 +342,7 @@ class GlobalConfig(object):
         """
         :rtype: GlobalConfig
         """
+        directory = check_directory(directory)
         config_file = join(directory, 'pyloggr_config')
         config = ConfigObj(infile=config_file, interpolation=False, encoding="utf-8", write_empty_values=True,
                            raise_errors=True, file_error=True)
@@ -353,7 +354,7 @@ class GlobalConfig(object):
 
         new = {}
         for harvest_directory in d['HARVEST']:
-            directory = abspath(expanduser(harvest_directory))
+            directory = check_directory(directory)
             d['HARVEST'][harvest_directory]['directory_name'] = directory
             new[directory] = d['HARVEST'][harvest_directory]
         d['HARVEST'] = {'directories': new.values()}
@@ -372,17 +373,8 @@ class GlobalConfig(object):
             c.REDIS.password = None
 
         c.HMAC_KEY = b64decode(c.HMAC_KEY)
-        c.PIDS_DIRECTORY = abspath(expanduser(c.PIDS_DIRECTORY))
-        # todo: make utils to check if directory exists and is writeable
-        if not exists(c.PIDS_DIRECTORY):
-            os.makedirs(c.PIDS_DIRECTORY)
-        if not os.access(c.PIDS_DIRECTORY, os.W_OK | os.X_OK):
-            raise ValueError("PID directory '{}' must be writeable".format(c.PIDS_DIRECTORY))
-        c.RESCUE_QUEUE_FNAME = abspath(expanduser(c.RESCUE_QUEUE_FNAME))
-        rescue_dir = dirname(c.RESCUE_QUEUE_FNAME)
-        if not exists(rescue_dir):
-            os.makedirs(rescue_dir)
-
+        c.PIDS_DIRECTORY = check_directory(c.PIDS_DIRECTORY)
+        c.RESCUE_QUEUE_DIRNAME = check_directory(c.RESCUE_QUEUE_DIRNAME)
         return c
 
 
@@ -442,10 +434,8 @@ def set_logging(filename, level="DEBUG"):
 
     filename = abspath(expanduser(filename))
     security_filename = abspath(expanduser(Config.LOGGING_FILES.security))
-    if not exists(dirname(filename)):
-        os.makedirs(dirname(filename))
-    if not exists(dirname(security_filename)):
-        os.makedirs(dirname(security_filename))
+    check_directory(dirname(filename))
+    check_directory(dirname(security_filename))
 
     logging_config_dict['handlers']['tofile']['filename'] = filename
     logging_config_dict['handlers']['security_handler']['filename'] = security_filename
