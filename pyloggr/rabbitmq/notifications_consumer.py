@@ -36,7 +36,7 @@ class NotificationsConsumer(Consumer, Observable):
         while True:
             message = yield message_queue.get()
             try:
-                yield self.notify_observers(ujson.loads(message.body))
+                self.notify_observers(ujson.loads(message.body))
             except Exception:
                 logger.exception("Swallowed exception")
 

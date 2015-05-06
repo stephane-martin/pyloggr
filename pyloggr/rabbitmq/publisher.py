@@ -221,13 +221,13 @@ class Publisher(object):
 
         if confirmation_type == 'ack':
             if multiple:
-                logger.info("Publisher: Multiple ACK up to tag: {}".format(tag))
+                logger.debug("Publisher: Multiple ACK up to tag: {}".format(tag))
                 all_confirmed_tags = [t for t, f in self.futures_ack.items() if t <= tag and not f.done()]
                 for t in all_confirmed_tags:
                     self.futures_ack[t].set_result(True)
                 self._ack += len(all_confirmed_tags)
             else:
-                logger.info("Publisher: Received ACK for message '{}'".format(tag))
+                logger.debug("Publisher: Received ACK for message '{}'".format(tag))
                 self.futures_ack[tag].set_result(True)
                 self._ack += 1
         else:
@@ -235,7 +235,7 @@ class Publisher(object):
             self.futures_ack[tag].set_result(False)
             self._nack += 1
 
-        logger.info("'Publisher: {}' deliveries on '{}' messages".format(self._ack + self._nack, self._delivery_tag))
+        logger.debug("'Publisher: {}' deliveries on '{}' messages".format(self._ack + self._nack, self._delivery_tag))
 
     @coroutine
     def stop(self):
