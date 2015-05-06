@@ -19,6 +19,7 @@ import arrow.parser
 import dateutil.parser
 from datetime import datetime
 from functools import total_ordering
+from io import open
 
 from future.utils import python_2_unicode_compatible, raise_from
 # noinspection PyPackageRequirements,PyCompatibility
@@ -29,6 +30,7 @@ from cryptography.hazmat.primitives import hmac as hmac_func
 from cryptography.exceptions import InvalidSignature
 from psycopg2.extras import Json
 from spooky_hash import Hash128
+from lockfile import LockFile, LockFailed
 
 from pyloggr.utils.structured_data import parse_structured_data
 from pyloggr.utils import to_unicode
@@ -545,7 +547,10 @@ class Event(object):
         if flds['STRUCTUREDDATA'] != '-':
             event_dict['structured_data'] = parse_structured_data(flds['STRUCTUREDDATA'])
 
-        return Event(**event_dict)
+        try:
+            return Event(**event_dict)
+        except TypeError as ex:
+            raise_from(ParsingError(u"Event could not be instantied"), ex)
 
     @classmethod
     def _load_syslog_rfc3164(cls, s):
@@ -579,7 +584,10 @@ class Event(object):
         event_dict['programname'] = event_dict['app_name']
         event_dict['syslogtag'] = flds['SYSLOGTAG'].strip()
 
-        return Event(**event_dict)
+        try:
+            return Event(**event_dict)
+        except TypeError as ex:
+            raise_from(ParsingError(u"Event could not be instantied"), ex)
 
     @classmethod
     def load(cls, s):
@@ -594,7 +602,10 @@ class Event(object):
         :raise `ParsingError`: if deserialization fails
         """
         if isinstance(s, dict):
-            return Event(**s)
+            try:
+                return Event(**s)
+            except TypeError as ex:
+                raise_from(ParsingError(u"Event could not be instantied"), ex)
         if isinstance(s, basestr):
             if REGEXP_START_SYSLOG23.match(s):
                 return cls._load_syslog_rfc5424(s)
@@ -604,6 +615,26 @@ class Event(object):
                 return cls._load_json(s)
         else:
             raise ValueError(u"s must be a dict or a basestring")
+
+    @classmethod
+    def from_file(cls, fname):
+        """
+        Read and parse en event from file `fname`
+
+        :param fname: filename
+        :type fname: str
+        :return: the parsed event
+        :rtype: Event
+        :raise OSError: if file operation failed
+        :raise InvalidSignature: if the event has an invalid hmac
+        :raise ParsingError: if the event could not be parsed
+        """
+        try:
+            with LockFile(fname):
+                with open(fname, 'rb') as fhandle:
+                    return cls.parse_bytes_to_event(fhandle.read(), json=True, hmac=True)
+        except LockFailed as ex:
+            raise_from(OSError("Event.from_file: failed to lock '{}'".format(fname)), ex)
 
     @classmethod
     def parse_bytes_to_event(cls, bytes_ev, hmac=False, json=False):
@@ -639,22 +670,38 @@ class Event(object):
     @classmethod
     def _load_json(cls, json_encoded):
         """
+        :param json_encoded: a JSON encoded event string
         :type json_encoded: str
         :rtype: Event
+        :raise ParsingError: if parsing failed
         """
         try:
             d = ujson.loads(json_encoded)
         except ValueError as ex:
             raise_from(ParsingError(u"Provided string was not JSON parsable", json=True), ex)
         else:
-            return Event(**d)
+            try:
+                return Event(**d)
+            except TypeError as ex:
+                raise_from(ParsingError(u"Event could not be instantied"), ex)
 
-    def dumps(self):
+    def dumps(self, fname=None):
         """
+        :param fname: if `fname` is given, the event is also written to file `fname`
+        :type fname: str
         :rtype: str
+        :raise OSError: if file operation failed
         """
         # instantiate a dedicate schema object to avoid thread safety issues
-        return ujson.dumps(self.dump())
+        s = ujson.dumps(self.dump())
+        if fname:
+            try:
+                with LockFile(fname):
+                    with open(fname, 'wb') as fhandle:
+                        fhandle.write(s)
+            except LockFailed as ex:
+                raise_from(OSError("Event.dumps: failed to lock '{}'".format(fname)), ex)
+        return s
 
     def dumps_elastic(self):
         """
