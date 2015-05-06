@@ -172,9 +172,10 @@ class BasePacker(object):
                 publications.append(queue.publish())
         if publications:
             yield publications
-        self.flushing = False
 
         # here queues are empty, so we can stop operations if needed
         if self.shutting_down and self.periodic is not None:
             self.periodic.stop()
             self.periodic = None
+
+        self.flushing = False
