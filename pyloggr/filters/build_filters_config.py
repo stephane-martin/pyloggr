@@ -81,8 +81,6 @@ if_block.setParseAction(make_if_block)
 if_filter_block.setParseAction(make_if_filter_block)
 
 
-
-
 class Assignment(object):
     def __init__(self, left, right):
         self.left = left
