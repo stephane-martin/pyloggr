@@ -3,7 +3,7 @@ __author__ = 'stef'
 
 import logging
 from abc import ABCMeta, abstractmethod
-from tornado.gen import coroutine
+from tornado.ioloop import IOLoop
 import ujson
 
 
@@ -47,7 +47,6 @@ class Observable(object):
             del self.observers[:]
         self.queue = None
 
-    @coroutine
     def notify_observers(self, d, routing_key=None):
         """
         Notify observers that the observable has a message for them
@@ -78,7 +77,6 @@ class NotificationProducer(Observable):
     def unregister_queue(self):
         self.queue = None
 
-    @coroutine
     def notify_observers(self, d, routing_key=None):
         """
         :param d: a message to send to observers
@@ -91,26 +89,37 @@ class NotificationProducer(Observable):
         Tornado coroutine
         """
         for observer in self.observers:
+            # noinspection PyBroadException
             try:
                 observer.notified(d)
             except Exception:
-                logger.exception("Swallowing exception that happened in some observer")
+                logger.exception("notify_observers: swallowing exception")
+
         if not self.queue:
             logger.debug("No notification queue")
             return
-        if not routing_key:
-            return
+
         logger.debug("Sending notification with routing key '{}'".format(routing_key))
+
+        if not routing_key:
+            routing_key = "pyloggr.generic.notification"
+
+        json_message = ujson.dumps(d)
+        future = self.queue.publish(
+            exchange='pyloggr.pubsub',
+            body=json_message,
+            routing_key=routing_key,
+            persistent=False
+        )
+        IOLoop.current().add_future(future, self.after_published)
+
+    @classmethod
+    def after_published(cls, future):
+        # noinspection PyBroadException
         try:
-            json_message = ujson.dumps(d)
-            yield self.queue.publish(
-                exchange='pyloggr.pubsub',
-                body=json_message,
-                routing_key=routing_key,
-                persistent=False
-            )
-        except Exception:
-            logger.exception("Swallowing exception that happened in queue")
+            future.result()
+        except:
+            logger.exception("Exception happened while publishing notification to RabbitMQ")
 
 
 class Observer(object):
