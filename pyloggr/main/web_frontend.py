@@ -54,6 +54,7 @@ class SyslogServers(Observable, Observer):
             } for client in syslog_server.clients}
         } for syslog_server in cache.syslog_list.values()}
 
+
     def notified(self, d):
         # get updates from rabbitmq
         if d['action'] == "add_client":
