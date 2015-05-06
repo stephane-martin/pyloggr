@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 """
-Collect events from the Redis rescue queue and try to forward them to RabbitMQ
+Collect events from the rescue queue and try to forward them to RabbitMQ
 """
 __author__ = 'stef'
 
@@ -10,8 +10,8 @@ from tornado.gen import coroutine
 from tornado.ioloop import IOLoop, PeriodicCallback
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.cache import cache
-from pyloggr.config import SLEEP_TIME
-from pyloggr.event import Event, ParsingError
+from pyloggr.config import Config
+from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +21,18 @@ class EventCollector(object):
         self.rabbitmq_config = rabbitmq_config
         self.publisher = None
         self._connect_rabbitmq_later = None
+        self.collecting = False
         self.shutting_down = False
 
     @coroutine
     def start(self):
-        self.publisher = Publisher(self.rabbitmq_config)
+        self.publisher = Publisher(self.rabbitmq_config, base_routing_key='pyloggr.syslog.rescue')
         try:
             rabbit_close_ev = yield self.publisher.start()
         except RabbitMQConnectionError:
             logger.error("Can't connect to RabbitMQ")
             self.stop()
+            yield sleep(Config.SLEEP_TIME)
             self.connect_later()
             return
 
@@ -39,21 +41,13 @@ class EventCollector(object):
         yield rabbit_close_ev.wait()
         # we lost connection to RabbitMQ
         self.stop()
+        yield sleep(Config.SLEEP_TIME)
         self.connect_later()
         return
 
     def connect_later(self):
-        if self._connect_rabbitmq_later is None and not self.shutting_down:
-            logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(SLEEP_TIME))
-            self._connect_rabbitmq_later = IOLoop.instance().call_later(SLEEP_TIME, self.start)
-
-    def _cancel_connect_later(self):
-        """
-        Used in normal shutdown process (dont try to reconnect when we have decided to shutdown)
-        """
-        if self._connect_rabbitmq_later is not None:
-            IOLoop.instance().remove_timeout(self._connect_rabbitmq_later)
-            self._connect_rabbitmq_later = None
+        if not self.shutting_down:
+            self._connect_rabbitmq_later = IOLoop.instance().add_callback(self.start)
 
     def stop(self):
         self._stop_periodic()
@@ -63,7 +57,6 @@ class EventCollector(object):
 
     def shutdown(self):
         self.shutting_down = True
-        self._cancel_connect_later()
         self.stop()
 
     def _start_periodic(self):
@@ -73,7 +66,7 @@ class EventCollector(object):
         if self.periodic_queue_saving is None:
             self.periodic_queue_saving = PeriodicCallback(
                 callback=self._try_publish_again,
-                callback_time=1000 * 60
+                callback_time=Config.SLEEP_TIME * 1000
             )
             self.periodic_queue_saving.start()
 
@@ -90,12 +83,16 @@ class EventCollector(object):
     def _try_publish_again(self):
         """
         _try_publish_again()
-        Check the rescue queue, try to publish events in RabbitMQ if we find some of them
+        Check the rescue queue, try to publish events in RabbitMQ
 
         Note
         ====
         Tornado coroutine
         """
+        if self.collecting:
+            return
+        self.collecting = True
+
         nb_events = len(cache.rescue)
         if nb_events is None:
             logger.info("Rescue queue: can't connect to Redis")
@@ -109,17 +106,11 @@ class EventCollector(object):
         if nb_events == 0:
             return
 
-        publish_futures = dict()
-        for bytes_event in cache.rescue.get_generator():
-            try:
-                event = Event.parse_bytes_to_event(bytes_event)
-            except ParsingError:
-                # we silently drop the unparsable event
-                logger.debug("Rescue queue: dropping one unparsable event")
-                continue
-
-            publish_futures[bytes_event] = self.publisher.publish_event(event)
-
+        publish_futures = [
+            self.publisher.publish_event(event, 'pyloggr.syslog.collector') for event in cache.rescue.get_generator()
+        ]
         results = yield publish_futures
-        failed_events = [bytes_event for (bytes_event, ack) in results.items() if not ack]
+        failed_events = [event for (ack, event) in results if not ack]
         map(cache.rescue.append, failed_events)
+
+        self.collecting = False
