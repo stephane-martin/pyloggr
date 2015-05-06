@@ -829,6 +829,8 @@ class SyslogServer(TCPServer):
                     {'action': 'remove_server', 'server_id': self.server_id},
                     'pyloggr.syslog.servers'
                 )
+                # buy a bit of time so that notifications actually reach rabbit
+                yield sleep(2)
 
     @coroutine
     def stop_all(self):
@@ -840,6 +842,7 @@ class SyslogServer(TCPServer):
         ====
         Tornado coroutine
         """
+
         yield self._stop_syslog()
         del cache.syslog_list[self.server_id]
         self._reset()
@@ -850,10 +853,9 @@ class SyslogServer(TCPServer):
         Authoritarian shutdown
         """
         self.shutting_down = True
-        if publications:
-            publications.shutdown()
         yield self.stop_all()
         if publications:
+            publications.shutdown()
             publications.publication_ioloop.stop()
 
     def _handle_connection(self, connection, address):
