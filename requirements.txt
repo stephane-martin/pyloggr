@@ -42,6 +42,6 @@ momoko
 spooky_hash
 subprocess32
 argh
-PyYAML
-
+cytoolz
+unidecode
 
