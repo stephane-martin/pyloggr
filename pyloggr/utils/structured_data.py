@@ -4,7 +4,6 @@
 Pyparsing parser for rfc5424 structured data
 
 Credit: https://bitbucket.org/evax/loggerglue
-This file is specifically licensed under MIT license.
 """
 
 import logging
@@ -15,6 +14,7 @@ sp = Suppress(White(" ", exact=1))
 nilvalue = Word("-")
 sd_name = CharsNotIn('= ]"', 1, 32)
 param_name = sd_name.setResultsName('SD_PARAM_NAME')
+# todo: respect escaping RFC 5424
 param_value = QuotedString(quoteChar='"', escChar='\\', multiline=True)
 param_value = param_value.setResultsName('SD_PARAM_VALUE')
 sd_id = sd_name.setResultsName('SD_ID')
@@ -28,8 +28,12 @@ structured_data_parser = structured_data_parser.setResultsName('STRUCTURED_DATA'
 
 
 def parse_structured_data(s):
-    results = dict()
+    """
+    Parse structured data from string into dict of dict
 
+    :param s: string
+    """
+    results = {}
     try:
         toks = structured_data_parser.parseString(s, parseAll=True)
     except ParseException:
@@ -39,7 +43,7 @@ def parse_structured_data(s):
         return None
     for element in s_data:
         sdid = element['SD_ID']
-        results[sdid] = dict()
+        results[sdid] = {}
         for param in element['SD_PARAMS']:
             results[sdid][param['SD_PARAM_NAME']] = param['SD_PARAM_VALUE']
     return results
