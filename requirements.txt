@@ -44,4 +44,5 @@ subprocess32
 argh
 cytoolz
 unidecode
+msgpack-python
 

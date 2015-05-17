@@ -41,12 +41,14 @@ requirements = [
     'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx>=1.3', 'argh',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
-    'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil', 'watchdog', 'momoko'
+    'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil', 'watchdog', 'momoko', 'cytoolz',
+    'msgpack-python', 'unidecode'
 ]
 
 if on_rtd:
     extensions_with_problems = [
-        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil', 'lockfile'
+        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil', 'lockfile', 'cytoolz',
+        'msgpack-python'
     ]
     for ext in extensions_with_problems:
         requirements.remove(ext)
