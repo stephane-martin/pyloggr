@@ -11,22 +11,30 @@ __author__ = 'stef'
 
 from os.path import join, exists, isdir, expanduser, abspath
 import os
+import re
 from distutils.util import strtobool
 
 from future.builtins import input
 from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
+from unidecode import unidecode
 
 from .fix_unicode import to_unicode
 
 
 def sleep(duration):
+    """
+    Return a Future that just 'sleeps'. The Future can be interrupted in case of process shutdown.
+
+    :param duration: sleep time in seconds
+    :rtype: Future
+    """
     f = Future()
 
-    def nothing():
+    def _nothing():
         f.set_result(None)
 
-    timeout = IOLoop.current().call_later(duration, nothing)
+    timeout = IOLoop.current().call_later(duration, _nothing)
     timeout.callback.sleeper = True
     return f
 
@@ -69,3 +77,17 @@ def check_directory(dname):
         os.makedirs(dname)
     return dname
 
+
+_not_allowed_chars_in_key = re.compile(r'[=\s\]"]')
+_not_allowed_chars_in_tag = re.compile('[=&\\(\\)!^¨*/;,\\?\\.:\\[\\]"\']')
+_escape_re = re.compile(r'([="\]])')
+
+def sanitize_key(key):
+    return (_not_allowed_chars_in_key.sub(u'', unidecode(to_unicode(key)))).decode('ascii')
+
+def sanitize_tag(tag):
+    return _not_allowed_chars_in_tag.sub(u'', to_unicode(tag))
+
+def escape_param_value(param_value):
+    # RFC 5424: PARAM-VALUE = UTF-8-STRING ; characters '"', '\' and ']' MUST be escaped.
+    return _escape_re.sub(r'\\\1', to_unicode(param_value))
