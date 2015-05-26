@@ -1,17 +1,22 @@
 # encoding: utf-8
+
+"""
+Grok filter, like in logstash
+"""
+
 __author__ = 'stef'
 
 import os
 from os.path import basename, dirname, abspath, join
 import re
 import logging
+from itertools import chain
 
+# noinspection PyCompatibility
 import regex
-
 from future.utils import python_2_unicode_compatible
-
-from ..utils.fix_unicode import to_unicode
-
+from pyloggr.utils import to_unicode
+from .base import Engine
 
 PATTERN_NODE_STR = u"""
 Pattern:    {0.label}
@@ -24,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 @python_2_unicode_compatible
 class PatternNode(object):
+    """
+    Utility class to store grok patterns
+    """
     def __init__(self, label, pattern, depends=None):
         self.label = label
         self.pattern = pattern
@@ -47,10 +55,14 @@ class PatternNode(object):
         return hash(self.label)
 
 
-class GrokEngine(object):
+class GrokEngine(Engine):
+    """
+    The grok filter matches syslog event with some regexp patterns to extract information
+    """
     thread_safe = True
 
     def __init__(self, config_dir):
+        super(GrokEngine, self).__init__(config_dir)
         self._raw_patterns = dict()
         self._pattern_nodes = dict()
         self._patterns_dir = join(config_dir, 'patterns')
@@ -77,7 +89,9 @@ class GrokEngine(object):
                         self._raw_patterns[to_unicode(label.strip())] = to_unicode(pattern.strip())
 
     def _build_pattern_tree(self):
-        """build the tree of patterns and their relations"""
+        """
+        build the tree of patterns and their relations
+        """
         self._pattern_nodes = dict()
 
         for (label, pattern) in self._raw_patterns.items():
@@ -85,7 +99,6 @@ class GrokEngine(object):
                 self._pattern_nodes[label] = PatternNode(label, pattern, [])
             else:
                 logger.warning("Grok patterns: ignoring duplicate '{}'".format(label))
-
 
         for node in self._pattern_nodes.values():
             patterns_depends = [pattern_depend for (pattern_depend, variable) in re.findall(r'%{(\w+):(\w+)}', node.pattern)]
@@ -159,19 +172,14 @@ class GrokEngine(object):
     def apply(self, ev, args, kw):
         if not args:
             return
-
         prefix = kw.get('prefix', '')
+        prefix = prefix[0] if prefix else ''
 
         (pattern_name, new_fields) = self.search(ev.message, args)
         if new_fields:
             new_fields = {prefix + label: field for label, field in new_fields.items() if field is not None}
-            ev.update_fields(new_fields)
+            ev.update_cfields(new_fields)
             ev[prefix + 'grok_pattern'] = pattern_name
+            # we stop after first match
             return True
         return False
-
-    def open(self):
-        pass
-
-    def close(self):
-        pass

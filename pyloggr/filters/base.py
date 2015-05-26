@@ -13,7 +13,6 @@ from future.utils import with_metaclass
 class Engine(with_metaclass(ABCMeta, object)):
     """
     Abstract base class for filters
-
     """
     thread_safe = True
 
@@ -38,7 +37,7 @@ class Engine(with_metaclass(ABCMeta, object)):
     @abstractmethod
     def apply(self, ev, args, kw):
         """
-        Apply the filter to the given event. TooOverride in concrete filters.
+        Apply the filter to the given event. To override in concrete filters.
 
         :param ev: event
         :param args: filter arguments

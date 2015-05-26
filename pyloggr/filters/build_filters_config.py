@@ -96,7 +96,7 @@ class Assignment(object):
         return self.str()
 
     def apply(self, ev):
-        ev[self.left.name] = self.right.apply(ev)
+        ev.append(self.left.name, self.right.apply(ev))
 
     @classmethod
     def from_tokens(cls, toks):
@@ -209,6 +209,12 @@ def parse_string(s):
 
 
 def parse_config_file(filter_config_filename):
+    """
+    Parse the `filters_config` configuration file.
+
+    :param filter_config_filename: location of configuration file
+    :type filter_config_filename: str
+    """
     with open(filter_config_filename, 'rb') as handle:
         s = handle.read()
     return parse_string(to_unicode(s))
