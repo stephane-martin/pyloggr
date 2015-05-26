@@ -108,7 +108,7 @@ packer_group = packer_group_with_condition | packer_group_without_condition
 packers_config_parser = (OneOrMore(comment_line | packer_group)).setParseAction(make_all_groups)
 
 
-def parse_string(s):
+def _parse_string(s):
     try:
         return packers_config_parser.parseString(s, parseAll=True)[0]
     except ParseException as ex:
@@ -116,10 +116,16 @@ def parse_string(s):
         raise_from(ValueError("Syntax Error in packers configuration"), ex)
 
 
-def parse_config_file(filter_config_filename):
-    with open(filter_config_filename, 'rb') as handle:
+def parse_config_file(packer_config_filename):
+    """
+    Parse the `packers_config` configuration file.
+
+    :param packer_config_filename: location of configuration file
+    :type packer_config_filename: str
+    """
+    with open(packer_config_filename, 'rb') as handle:
         s = handle.read()
-    return parse_string(to_unicode(s))
+    return _parse_string(to_unicode(s))
 
 
 b = """
