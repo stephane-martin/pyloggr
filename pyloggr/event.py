@@ -1,13 +1,11 @@
 # encoding: utf-8
 """
-The pyloggr.event module mainly provides the Event and EventSchema classes.
+The pyloggr.event module mainly provides the Event class.
 
-Event provides an abstraction of a log event.
-EventSchema is used for marshalling/unmarshalling of Event objects.
+Event provides an abstraction of a syslog event.
 """
-
+from __future__ import absolute_import, division, print_function
 __author__ = 'stef'
-
 
 import logging
 from base64 import b64encode, b64decode, urlsafe_b64encode
@@ -21,9 +19,10 @@ from datetime import datetime
 from functools import total_ordering
 from io import open
 
-from future.utils import python_2_unicode_compatible, raise_from
+from future.utils import python_2_unicode_compatible, raise_from, viewvalues, viewkeys
+from future.builtins import str as past_unicode
+from future.builtins import bytes as realbytes
 # noinspection PyPackageRequirements,PyCompatibility
-from past.builtins import basestring as basestr
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import hmac as hmac_func
@@ -31,12 +30,14 @@ from cryptography.exceptions import InvalidSignature
 from psycopg2.extras import Json
 from spooky_hash import Hash128
 from lockfile import LockFile, LockFailed
+import msgpack
 
-from pyloggr.utils.structured_data import parse_structured_data
-from pyloggr.utils import to_unicode
+from pyloggr.utils.structured_data import StructuredData
+from pyloggr.utils import to_unicode, sanitize_key, sanitize_tag
 from pyloggr.utils.constants import RE_MSG_W_TRUSTED, TRUSTED_FIELDS_MAP, REGEXP_SYSLOG, REGEXP_START_SYSLOG
 from pyloggr.utils.constants import RE_TRUSTED_FIELDS, REGEXP_START_SYSLOG23, FACILITY, SEVERITY, SQL_VALUES_STR
-from pyloggr.utils.constants import EVENT_STR_FMT, REGEXP_SYSLOG23
+from pyloggr.utils.constants import EVENT_STR_FMT, REGEXP_SYSLOG23, FACILITY_TO_INT, SEVERITY_TO_INT
+from pyloggr.utils.constants import PYLOGGR_SDID
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +51,9 @@ class ParsingError(ValueError):
         self.json = kwargs['json'] if 'json' in kwargs else False
 
 
-SEVERITY_VALUES = SEVERITY.values()
-FACILITY_VALUES = FACILITY.values()
-
-
 @python_2_unicode_compatible
 @total_ordering
 class Event(object):
-    HMAC_KEY = None
     """
     Represents a syslog event, with optional tags, custom fields and structured data
 
@@ -76,81 +72,88 @@ class Event(object):
     timereported: Datetime
     timegenerated: Datetime
     timehmac: Datetime
-    trusted_pid: int
-    trusted_uid= int
-    trusted_gid: int
-    trusted_comm: str
-    trusted_exe: str
-    trusted_cmdline: str
     custom_fields: dictionnary of custom fields
     structured_data: dictionnary representing syslog structured data
     tags: set of str
 
     """
 
-    __slots__ = ('procid', 'trusted_uid', 'trusted_gid', 'trusted_pid', '_severity', '_facility',
+    HMAC_KEY = None
+    __slots__ = ('procid', '_severity', '_facility',
                  '_app_name', '_source', 'programname', 'syslogtag', '_message', '_uuid', '_hmac',
-                 '_timereported', '_timegenerated', '_timehmac', 'iut', 'trusted_comm', 'trusted_exe',
-                 'trusted_cmdline', 'custom_fields', 'structured_data', '_tags', 'relp_id',
-                 'have_been_published', '_dirty_uuid')
+                 '_timereported', '_timegenerated', '_timehmac', 'iut', 'structured_data',
+                 'relp_id', 'have_been_published', '_dirty', 'override_exchanges', 'override_event_type')
 
     @staticmethod
     def make_severity(severity):
-        if not severity:
-            return u'notice'
+        """
+        Return a normalized severity value
+
+        :param severity: syslog priority (integer) or string
+        :type severity: int or str or unicode
+        """
         try:
             # from encoded priority
             return SEVERITY.get(int(severity) & 7, u'')
-        except ValueError:
+        except (ValueError, TypeError):
             pass
-        severity = to_unicode(severity)
-        if severity in SEVERITY_VALUES:
-            return severity
-        return SEVERITY.get(severity.lower(), u'notice')
+        if not severity:
+            return u'notice'
+        return SEVERITY.get(to_unicode(severity).lower(), u'notice')
 
     @staticmethod
     def make_facility(facility):
-        if facility is None:
-            return u''
+        """
+        Return a normalized facility value
+
+        :param facility: syslog facility (integer) or string
+        :type facility: int or str or unicode
+        """
         try:
             # from encoded priority
             return FACILITY.get(int(facility) >> 3, u'')
         except ValueError:
             pass
-        facility = to_unicode(facility)
-        if facility in FACILITY_VALUES:
-            return facility
-        return FACILITY.get(facility.lower(), u'')
+        if not facility:
+            return u'user'
+        return FACILITY.get(to_unicode(facility).lower(), u'user')
 
     @staticmethod
     def make_arrow_datetime(dt):
+        """
+        Parse a date-time value and return the corresponding Arrow object
+
+        :param dt: date-time
+        :type dt: Arrow or datetime or str
+        :return: Arrow object
+        """
         if dt is None:
             return None
         if isinstance(dt, Arrow):
             return dt
         if isinstance(dt, datetime):
             return Arrow.fromdatetime(dt).to('utc')
-        if isinstance(dt, basestr):
-            # sometimes microseconds are delimited with a comma
-            dt = dt.replace(',', '.')
+
+        # sometimes microseconds are delimited with a comma
+        dt = dt.replace(',', '.')
+        try:
+            # ISO format
+            return arrow.get(dt)
+        except arrow.parser.ParserError:
             try:
-                # ISO format
-                return arrow.get(dt)
+                return arrow.get(dt, "YYMMDD HH:mm:ss")
             except arrow.parser.ParserError:
                 try:
-                    return arrow.get(dt, "YYMMDD HH:mm:ss")
-                except arrow.parser.ParserError:
-                    try:
-                        # fallback to dateutil parser
-                        return Arrow.fromdatetime(dateutil.parser.parse(dt)).to('utc')
-                    except ValueError:
-                        return None
+                    # fallback to dateutil parser
+                    return Arrow.fromdatetime(dateutil.parser.parse(dt)).to('utc')
+                except ValueError:
+                    return None
 
+    # noinspection PyUnusedLocal
     def __init__(
             self, procid=u'-', severity=u'', facility=u'', app_name=u'', source=u'', programname=u'',
             syslogtag=u'', message=u'', uuid=None, hmac=None, timereported=None, timegenerated=None, timehmac=None,
-            trusted_pid=None, trusted_uid=None, trusted_gid=None, trusted_comm=u'', trusted_exe=u'',
-            trusted_cmdline=u'', custom_fields=None, structured_data=None, tags=None, iut=1, **kwargs
+            custom_fields=None, structured_data=None, tags=None, iut=1, **kwargs
     ):
 
         try:
@@ -158,54 +161,51 @@ class Event(object):
         except (ValueError, TypeError):
             self.procid = None
 
-        try:
-            self.trusted_uid = int(trusted_uid)
-        except (ValueError, TypeError):
-            self.trusted_uid = None
-
-        try:
-            self.trusted_gid = int(trusted_gid)
-        except (ValueError, TypeError):
-            self.trusted_gid = None
-
-        try:
-            self.trusted_pid = int(trusted_pid)
-        except (ValueError, TypeError):
-            self.trusted_pid = None
-
         self._severity = self.make_severity(severity)
         self._facility = self.make_facility(facility)
+
         self._app_name = to_unicode(app_name)
         self._source = to_unicode(source)
-        self.programname = to_unicode(programname)
-        self.syslogtag = to_unicode(syslogtag)
+        self.programname = to_unicode(programname) if programname else self._app_name
+        if not syslogtag:
+            if self.procid is not None and self._app_name:
+                self.syslogtag = u'{}[{}]'.format(self._app_name, self.procid)
+            else:
+                self.syslogtag = self._app_name
+        else:
+            self.syslogtag = to_unicode(syslogtag)
         self._message = to_unicode(message.strip('\r\n '))
         self._hmac = to_unicode(hmac)
         self.iut = iut
-        self.trusted_comm = to_unicode(trusted_comm)
-        self.trusted_exe = to_unicode(trusted_exe)
-        self.trusted_cmdline = to_unicode(trusted_cmdline)
 
-        self._timegenerated = Arrow.utcnow() if timegenerated is None else self.make_arrow_datetime(timegenerated)
-        self._timereported = self._timegenerated if timereported is None else self.make_arrow_datetime(timereported)
-        self._timehmac = self.make_arrow_datetime(timehmac)
+        self._timegenerated = self.make_arrow_datetime(timegenerated) if timegenerated else Arrow.utcnow()
+        self._timereported = self.make_arrow_datetime(timereported) if timereported else self._timegenerated
+        self._timehmac = self.make_arrow_datetime(timehmac) if timehmac else None
 
-        self.custom_fields = custom_fields if custom_fields else dict()
-        self.structured_data = structured_data if structured_data else dict()
-        self._tags = set(tags) if tags else set()
+        self.structured_data = StructuredData(structured_data)
+
+        if tags:
+            self.structured_data[PYLOGGR_SDID]['tags'].update(sanitize_tag(tag) for tag in tags)
+
+        if custom_fields:
+            self.structured_data[PYLOGGR_SDID].update(custom_fields)
 
         self._parse_trusted()
-        self._dirty_uuid = True
+        self._dirty = False
         if uuid:
             self._uuid = uuid
-            self._dirty_uuid = False
         else:
             self.generate_uuid()
         self.relp_id = None
+        self.override_exchanges = []
+        self.override_event_type = None
 
     @property
     def uuid(self):
-        if self._dirty_uuid:
+        """
+        Return the event UUID. If event is dirty, generate a new UUID and return it.
+        """
+        if self._dirty:
             self.generate_uuid()
             if self._hmac:
                 self.generate_hmac(verify_if_exists=False)
@@ -213,80 +213,146 @@ class Event(object):
 
     @property
     def message(self):
+        """
+        Event message
+        """
         return self._message
 
     @message.setter
     def message(self, new_msg):
+        """
+        Set event message
+
+        :param new_msg: new message value
+        :type new_msg: str
+        """
         new_msg = to_unicode(new_msg)
         if new_msg != self._message:
             self._message = new_msg
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def source(self):
+        """
+        Event source hostname
+        """
         return self._source
 
     @source.setter
     def source(self, new_source):
+        """
+        Set event source
+
+        :param new_source: new source value
+        :type new_source: str
+        """
         new_source = to_unicode(new_source)
         if new_source != self._source:
             self._source = new_source
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def app_name(self):
+        """
+        Name of application that generated the event
+        """
         return self._app_name
 
     @app_name.setter
     def app_name(self, new_app_name):
+        """
+        Set event application name
+
+        :param new_app_name: new application name value
+        :type new_app_name: str
+        """
         new_app_name = to_unicode(new_app_name)
         if new_app_name != self._app_name:
             self._app_name = new_app_name
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def facility(self):
+        """
+        Event facility
+        """
         return self._facility
 
     @facility.setter
     def facility(self, new_facility):
+        """
+        Set event facility
+
+        :param new_facility: new facility
+        :type new_facility: str
+        """
         new_f = self.make_facility(new_facility)
         if self._facility != new_f:
             self._facility = new_f
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def severity(self):
+        """
+        Event severity
+        """
         return self._severity
 
     @severity.setter
     def severity(self, new_severity):
+        """
+        Set event severity
+
+        :param new_severity: new severity
+        :type new_severity: str
+        """
         new_s = self.make_facility(new_severity)
         if self._severity != new_s:
             self._severity = new_s
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def timegenerated(self):
+        """
+        event "first seen" datetime
+        """
         return self._timegenerated.datetime
 
     @timegenerated.setter
     def timegenerated(self, new_time):
+        """
+        Set timegenerated datetime
+
+        :param new_time: new datetime
+        :type new_time: Arrow, datetime or str
+        """
         self._timegenerated = self.make_arrow_datetime(new_time)
 
     @property
     def timereported(self):
+        """
+        event creation datetime
+        """
         return self._timereported.datetime
 
     @timereported.setter
     def timereported(self, new_time):
+        """
+        Set timereported datetime
+
+        :param new_time: new datetime
+        :type new_time: Arrow, datetime or str
+        """
         new_t = self.make_arrow_datetime(new_time)
         if new_t != self._timereported:
             self._timereported = new_t
-            self._dirty_uuid = True
+            self._dirty = True
 
     @property
     def timehmac(self):
+        """
+        datetime, when the event HMAC was created
+        """
         return None if self._timehmac is None else self._timehmac.datetime
 
     def generate_uuid(self):
@@ -306,8 +372,15 @@ class Event(object):
         digest.update(self.message.encode("utf-8"))
         digest.update(str(self._timereported.to('utc')))
         self._uuid = urlsafe_b64encode(digest.digest())
-        self._dirty_uuid = False
+        self._dirty = False
         return self._uuid
+
+    @property
+    def priority(self):
+        """
+        Return the event computed syslog priority
+        """
+        return 8 * FACILITY_TO_INT.get(self.facility, 1) + SEVERITY_TO_INT.get(self.severity)
 
     def __hash__(self):
         return hash(self.uuid)
@@ -338,11 +411,19 @@ class Event(object):
 
     @property
     def hmac(self):
+        """
+        Return the event HMAC.
+
+        If event doesn't have a HMAC, return empty string
+        If event has a HMAC and is not dirty, return HMAC
+        If event is dirty, compute the new HMAC and return it
+        """
         if not self._hmac:
             return u''
-        if not self._dirty_uuid:
+        if not self._dirty:
             return self._hmac
-        self.generate_uuid()        # self._dirty_uuid becomes False
+        # event is dirty, we re-generate UUID and HMAC
+        self.generate_uuid()
         self.generate_hmac(verify_if_exists=False)
         return self._hmac
 
@@ -379,7 +460,8 @@ class Event(object):
 
     def verify_hmac(self):
         """
-        Verify the event HMAC
+        Verify event's HMAC
+
         Throws an InvalidSignature exception if HMAC is invalid
 
         :return: True
@@ -387,9 +469,13 @@ class Event(object):
         :raise InvalidSignature: if HMAC is invalid
         """
         if not self._hmac:
-            raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC".format(self.uuid))
+            logger.debug("Event (UUID: {}) doesn't have a HMAC".format(self.uuid))
+            return True
+        if self._dirty:
+            logger.info("Can't verify HMAC: event is dirty")
+            return True
         if not self._timehmac:
-            raise InvalidSignature("Event (UUID: {}) doesn't have a HMAC time".format(self.uuid))
+            raise InvalidSignature("Event (UUID: {}) has a HMAC but doesn't have a HMAC time".format(self.uuid))
         h = self._make_hmac_obj()
         try:
             h.verify(b64decode(self._hmac))
@@ -399,35 +485,34 @@ class Event(object):
         return True
 
     @property
+    def custom_fields(self):
+        return self.structured_data[PYLOGGR_SDID]
+
+    @property
     def tags(self):
         """
         The tags as a Python list
         """
-        return list(self._tags)
+        return self.structured_data[PYLOGGR_SDID]['tags']
 
     def add_tags(self, tags):
         """
         Add some tags to the event
 
-        :param tags: a tag (str) or a list of tags
+        :param tags: a list of tags
         """
-        if isinstance(tags, basestr):
-            self._tags.add(tags)
-        else:
-            self._tags.update(tags)
+        if tags:
+            self.structured_data[PYLOGGR_SDID]['tags'].update(sanitize_tag(tag) for tag in tags)
 
     def remove_tags(self, tags):
         """
         Remove some tags from the event.
         If the event does not really have such tag, it is ignored.
 
-        :param tags: a tag (str) or a list of tags
+        :param tags: a list of tags
         """
-
-        if isinstance(tags, basestr):
-            self._tags.remove(tags)
-        else:
-            self._tags.difference_update(tags)
+        if tags:
+            self.structured_data[PYLOGGR_SDID]['tags'].difference_update(sanitize_tag(tag) for tag in tags)
 
     def __getitem__(self, key):
         """
@@ -436,18 +521,27 @@ class Event(object):
         :param key: custom field key
         :type key: str
         """
-        return self.custom_fields.get(key, None)
+        return self.structured_data[PYLOGGR_SDID][key]
 
-    def __setitem__(self, key, value):
+    def update_cfield(self, key, values):
+        """
+        Append some values to custom field `key`
+
+        :param key: custom field key
+        :param values: iterable
+        """
+        self.structured_data[PYLOGGR_SDID].add(key, values)
+
+    def __setitem__(self, key, values):
         """
         Sets a custom field
 
         :param key: custom field key
         :type key: str
-        :param value: custom field value
-        :type value: str
+        :param values: custom field values
+        :type values: iterable
         """
-        self.custom_fields[key] = value
+        self.structured_data[PYLOGGR_SDID][key] = values
 
     def __delitem__(self, key):
         """
@@ -456,35 +550,44 @@ class Event(object):
         :param key: custom field key
         :type key: str
         """
-        del self.custom_fields[key]
+        key = sanitize_key(key)
+        if key in self.structured_data[PYLOGGR_SDID]:
+            del self.structured_data[PYLOGGR_SDID][key]
 
-    def update_fields(self, d):
+    def update_cfields(self, d):
         """
         Add some custom fields to the event
 
         :param d: a dictionnary of new fields
         :type d: dict
         """
-        self.custom_fields.update(d)
+        self.structured_data[PYLOGGR_SDID].update(d)
 
     def __iter__(self):
-        return iter(self.custom_fields)
+        return (key for key in viewkeys(self.structured_data[PYLOGGR_SDID])
+                if bool(self.structured_data[PYLOGGR_SDID][key]))
 
+    # noinspection PyDocstring
     def iterkeys(self):
         return self.__iter__()
 
+    # noinspection PyDocstring
     def keys(self):
-        return self.custom_fields.keys()
+        return [key for key in viewkeys(self.structured_data[PYLOGGR_SDID])
+                if bool(self.structured_data[PYLOGGR_SDID][key])]
 
     def __contains__(self, key):
         """
-        Return True if event has a given custom field
+        Return True if event has the given custom field, and the field is not empty
 
         :param key: custom field key
         :type key: str
         :rtype: bool
         """
-        return key in self.custom_fields
+        san = sanitize_key(key)
+        if san not in self.structured_data[PYLOGGR_SDID]:
+            return False
+        return bool(self.structured_data[PYLOGGR_SDID][san])
 
     def _parse_trusted(self):
         """
@@ -499,18 +602,18 @@ class Event(object):
             trusted_fields_match = RE_TRUSTED_FIELDS.match(s)
             if not trusted_fields_match:
                 return
-            for f in trusted_fields_match.groupdict().values():
+            for f in viewvalues(trusted_fields_match.groupdict()):
                 if f is None:
                     continue
                 try:
-                    f_name, f_content = f.split('=', 1)
+                    f_name, f_content = f.split(u'=', 1)
                 except (ValueError, AttributeError):
                     pass
                 else:
-                    f_name = to_unicode(f_name.strip())
-                    if f_name in TRUSTED_FIELDS_MAP:
-                        f_name = TRUSTED_FIELDS_MAP[f_name]
-                        self.__setattr__(f_name, f_content.strip(' "\''))
+                    f_name = to_unicode(f_name.strip(u' "\'\r\n'))
+                    f_name = TRUSTED_FIELDS_MAP.get(f_name, None)
+                    if f_name:
+                        self.update_cfield(f_name, f_content.strip(u' "\'\r\n'))
 
     @classmethod
     def _load_syslog_rfc5424(cls, s):
@@ -522,6 +625,8 @@ class Event(object):
         :return: the new Event
         :rtype: Event
         """
+        # noinspection PyTypeChecker
+        s = to_unicode(s, fixes=True)
         match_obj = REGEXP_SYSLOG23.match(s)
         if match_obj is None:
             raise ParsingError("Event is not a SYSLOG23 string")
@@ -545,7 +650,7 @@ class Event(object):
             event_dict['syslogtag'] = event_dict['app_name']
 
         if flds['STRUCTUREDDATA'] != '-':
-            event_dict['structured_data'] = parse_structured_data(flds['STRUCTUREDDATA'])
+            event_dict['structured_data'] = StructuredData.parse(flds['STRUCTUREDDATA'])
 
         try:
             return Event(**event_dict)
@@ -562,6 +667,8 @@ class Event(object):
         :return: the new Event
         :rtype: Event
         """
+        # noinspection PyTypeChecker
+        s = to_unicode(s, fixes=True)
         match_obj = REGEXP_SYSLOG.match(s)
         if match_obj is None:
             raise ParsingError("Event is not a SYSLOG string")
@@ -596,7 +703,7 @@ class Event(object):
         and RFC 3164 events, or dictionnary events. It automatically detects the type, using regexp tests.
 
         :param s: string (JSON or RFC 5424 or RFC 3164) or dictionnary
-        :type s: str or dict
+        :type s: str or dict or bytes
         :return: The parsed event
         :rtype: Event
         :raise `ParsingError`: if deserialization fails
@@ -606,15 +713,27 @@ class Event(object):
                 return Event(**s)
             except TypeError as ex:
                 raise_from(ParsingError(u"Event could not be instantied"), ex)
-        if isinstance(s, basestr):
+        if isinstance(s, past_unicode):
+            s = s.encode('utf-8')
+        if isinstance(s, realbytes):
+            s = s.strip('\n\r ')
+            if not len(s):
+                raise ParsingError(u"empty string")
+            first = ord(s[0])
+            # 0xde or 0xdf from https://github.com/msgpack/msgpack/blob/master/spec.md
+            if first == 222 or first == 223:
+                return cls._load_msgpack(s)
+            # 123 = {
+            if first == 123:
+                return cls._load_json(s)
             if REGEXP_START_SYSLOG23.match(s):
                 return cls._load_syslog_rfc5424(s)
             elif REGEXP_START_SYSLOG.match(s):
                 return cls._load_syslog_rfc3164(s)
             else:
-                return cls._load_json(s)
+                raise ParsingError('unrecognized format')
         else:
-            raise ValueError(u"s must be a dict or a basestring")
+            raise ParsingError(u"s must be a dict or a basestring")
 
     @classmethod
     def from_file(cls, fname):
@@ -641,7 +760,6 @@ class Event(object):
         """
         Parse some bytes into an :py:class:`pyloggr.event.Event` object
 
-
         :param bytes_ev: the event as bytes
         :type bytes_ev: bytes
         :param hmac: generate/verify a HMAC
@@ -653,13 +771,12 @@ class Event(object):
         :raise ParsingError: if bytes could not be parsed correctly
         :raise InvalidSignature: if `hmac` is True and a HMAC already exists, but is invalid
         """
-        unicode_ev = to_unicode(bytes_ev)
         try:
             # optimization: if we're sure that the event is JSON, skip type detection tests
-            event = cls._load_json(unicode_ev) if json else cls.load(unicode_ev)
+            event = cls._load_json(bytes_ev) if json else cls.load(bytes_ev)
         except ParsingError:
             logger.warning(u"Could not unmarshall a syslog event")
-            logger.debug(to_unicode(unicode_ev))
+            logger.debug(to_unicode(bytes_ev))
             raise
 
         if hmac:
@@ -670,6 +787,8 @@ class Event(object):
     @classmethod
     def _load_json(cls, json_encoded):
         """
+        Factory: returns an Event by parsing a JSON encoded string
+
         :param json_encoded: a JSON encoded event string
         :type json_encoded: str
         :rtype: Event
@@ -685,23 +804,133 @@ class Event(object):
             except TypeError as ex:
                 raise_from(ParsingError(u"Event could not be instantied"), ex)
 
-    def dumps(self, fname=None):
+    @classmethod
+    def _load_msgpack(cls, msgpack_encoded):
         """
-        :param fname: if `fname` is given, the event is also written to file `fname`
-        :type fname: str
-        :rtype: str
-        :raise OSError: if file operation failed
+        Factory: returns an Event by parsing a msgpack encoded string
+
+        :param msgpack_encoded: a JSON encoded event string
+        :type msgpack_encoded: bytes
+        :rtype: Event
+        :raise ParsingError: if parsing failed
         """
-        # instantiate a dedicate schema object to avoid thread safety issues
-        s = ujson.dumps(self.dump())
+        try:
+            d = msgpack.unpackb(msgpack_encoded)
+        except ValueError as ex:
+            raise_from(ParsingError(u"Provided string was not msgpack parsable", json=True), ex)
+        else:
+            try:
+                return Event(**d)
+            except TypeError as ex:
+                raise_from(ParsingError(u"Event could not be instantied"), ex)
+
+    def dump(self, frmt="JSON", fname=None):
+        """
+        Dump the event
+
+        Explicit format: a string with the following possible placeholders: $DATE, $DATETIME, $MESSAGE, $SOURCE,
+        $APP_NAME, $SEVERITY, $FACILITY, $PROCID, $UUID, $TAGS
+
+        :param frmt: dumping format (JSON, MSGPACK, RFC5424, RFC3164, RSYSLOG, ES or an explicit format)
+        :param fname: if not None, write the dumped string to fname file
+        :return: dumped string
+        :raise OSError: if file operation fails (when fname is not None)
+        """
+        dispatch = {
+            'JSON': self.dump_json,
+            'MSGPACK': self.dump_msgpack,
+            'RFC5424': self.dump_rfc5424,
+            'RFC3164': self.dump_rfc3164,
+            'RSYSLOG': self.dump_rsyslog,
+            'ES': self.dumps_elastic
+        }
+        if frmt in dispatch:
+            # noinspection PyCallingNonCallable
+            s = dispatch[frmt]()
+        else:
+            # custom format
+            return to_unicode(frmt).replace(
+                "$DATE", str(self.timereported.date())
+            ).replace(
+                "$DATETIME", str(self._timereported)
+            ).replace(
+                "$MESSAGE", self.message
+            ).replace(
+                "$SOURCE", self.source
+            ).replace(
+                "$APP_NAME", self.app_name
+            ).replace(
+                "$SEVERITY", self.severity
+            ).replace(
+                "$FACILITY", self.facility
+            ).replace(
+                "$PROCID", str(self.procid) if self.procid else '-'
+            ).replace(
+                "$UUID", self.uuid
+            ).replace(
+                "$TAGS", ','.join(self.tags)
+            )
         if fname:
             try:
                 with LockFile(fname):
                     with open(fname, 'wb') as fhandle:
                         fhandle.write(s)
             except LockFailed as ex:
-                raise_from(OSError("Event.dumps: failed to lock '{}'".format(fname)), ex)
+                raise_from(OSError("Event.dump_json: failed to lock '{}'".format(fname)), ex)
         return s
+
+    def dump_msgpack(self):
+        """
+        Dump the event using msgpack
+        """
+        return msgpack.packb(self.dump_dict())
+
+    def dump_rsyslog(self):
+        """
+        Dump the event as RSYSLOG_FileFormat
+
+        see: http://www.rsyslog.com/doc/v8-stable/configuration/templates.html
+        """
+        # ex: 2015-05-17T05:35:01.651336+02:00 smtp.vesperal.eu CRON[25052]: pam_unix(cron:session): session closed for user root
+        return u"{} {} {}: {}".format(str(self._timereported), self.source, self.syslogtag, self.message)
+
+    def dump_rfc3164(self):
+        """
+        Dump the event into a RFC 3164 old-style syslog string
+        """
+        # ex: <34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/8
+        return u"<{}>{} {} {}: {}".format(
+            self.priority,
+            self._timereported.to('utc').format("MMM DD hh:mm:ss"),
+            self.source,
+            self.app_name,
+            self.message
+        )
+
+    def dump_json(self):
+        """
+        Dump the event in JSON format
+
+        :rtype: str
+        """
+        # instantiate a dedicate schema object to avoid thread safety issues
+        return ujson.dumps(self.dump_dict())
+
+    def dump_rfc5424(self):
+        """
+        Dump the event into a RFC 5424 compliant string
+        """
+        procid = '-' if self.procid is None else self.procid
+        header = u"<{}>1 {} {} {} {} -".format(
+            self.priority, str(self._timereported), self.source, self.app_name, procid
+        )
+
+        if self.structured_data:
+            structured_data_line = self.structured_data.dump()
+        else:
+            structured_data_line = "-"
+        line = u"{} {} {}".format(header, structured_data_line, self.message)
+        return line.encode('utf-8')
 
     def dumps_elastic(self):
         """
@@ -709,9 +938,31 @@ class Event(object):
 
         :rtype: str
         """
-        pass
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-id-field.html
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-timestamp-field.html
+        d = {
+            'uuid':             self.uuid,
+            'severity':         self.severity,
+            'facility':         self.facility,
+            'source':           self.source,
+            'message':          self.message,
+            'app_name':         self.app_name,
+            'timereported':     str(self._timereported.to('utc')),
+            'timegenerated':    str(self._timegenerated.to('utc'))
+        }
+        if self.procid:
+            d['procid'] = self.procid
+        if self._timehmac:
+            d['timehmac'] = str(self._timehmac.to('utc'))
+        if self.hmac:
+            d['hmac'] = self.hmac
+        if self._tags:
+            d['tags'] = self.tags
+        if self.structured_data:
+            pass
+        return ujson.dumps(d)
 
-    def dump(self):
+    def dump_dict(self):
         """
         Serialize the event as a native python dict
 
@@ -730,16 +981,8 @@ class Event(object):
             'syslogtag':        self.syslogtag,
             'iut':              self.iut,
 
-            'trusted_pid':      self.trusted_pid if self.trusted_pid else None,
-            'trusted_uid':      self.trusted_uid if self.trusted_uid else None,
-            'trusted_gid':      self.trusted_gid if self.trusted_gid else None,
-            'trusted_comm':     self.trusted_comm,
-            'trusted_exe':      self.trusted_exe,
-            'trusted_cmdline':  self.trusted_cmdline,
-
-            'custom_fields':    self.custom_fields,
             'structured_data':  self.structured_data,
-            'tags':             self.tags,
+            'tags':             list(self.tags),
             'timereported':     str(self._timereported.to('utc')),
             'timegenerated':    str(self._timegenerated.to('utc')),
             'timehmac':         str(self._timehmac.to('utc')) if self._timehmac else None
@@ -747,17 +990,19 @@ class Event(object):
 
     def dump_sql(self, cursor):
         """
+        Dumps the event as a SQL insert statement
+
+        :param cursor: SQL cursor
         :rtype: str
         """
-        d = self.dump()
-        d['tags'] = self.tags
-        d['custom_fields'] = Json(self.custom_fields)
+        d = self.dump_dict()
         d['structured_data'] = Json(self.structured_data)
-        d['timereported'] = self._timereported
-        d['timegenerated'] = self._timegenerated
-        d['timehmac'] = self._timehmac
+        d['timereported'] = self.timereported
+        d['timegenerated'] = self.timegenerated
+        d['timehmac'] = self.timehmac
         return cursor.mogrify(SQL_VALUES_STR, d)
 
+    # noinspection PyDocstring
     def str(self):
         return EVENT_STR_FMT.format(self)
 
@@ -767,5 +1012,7 @@ class Event(object):
     def apply_filters(self, filters):
         """
         Apply some filters to the event
+
+        :param filters: filters to apply
         """
         filters.apply(self)
