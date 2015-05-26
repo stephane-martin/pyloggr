@@ -38,11 +38,11 @@ with open('HISTORY.rst') as history_file:
 
 requirements = [
     'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis', 'spooky_hash',
-    'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'marshmallow', 'redis',
+    'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'redis',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx>=1.3', 'argh',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
     'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil', 'watchdog', 'momoko', 'cytoolz',
-    'msgpack-python', 'unidecode'
+    'msgpack-python', 'unidecode', 'elasticsearch'
 ]
 
 if on_rtd:
