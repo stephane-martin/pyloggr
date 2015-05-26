@@ -9,17 +9,24 @@ __author__ = 'stef'
 from io import open
 import socket
 import logging
+from datetime import timedelta
+import ssl
+
 import arrow
-from tornado.gen import coroutine, Return, sleep
+import certifi
+from tornado.gen import coroutine, Return, sleep, with_timeout, TimeoutError
 from tornado.tcpclient import TCPClient
 from tornado.ioloop import IOLoop
 from tornado.iostream import StreamClosedError
 from toro import Event as ToroEvent
+from future.utils import raise_from
+
 from pyloggr.utils.constants import RELP_OPEN_COMMAND, RELP_CLOSE_COMMAND
 from pyloggr.event import Event
 
 
 logger = logging.getLogger(__name__)
+security_logger = logging.getLogger("security")
 
 
 class RELPException(Exception):
@@ -44,15 +51,114 @@ class RELPClient(object):
         RELP server hostname or IP
     port: int
         RELP server port
+    use_ssl: bool
+        Should the client connect with SSL
     """
 
-    def __init__(self, server, port):
+    def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None):
         self.server = server
         self.port = port
         self.stream = None
-        self.closed_connection_event = ToroEvent()
-        self.client = TCPClient()
+        self.closed_connection_event = None
+        self.client = None
         self.current_relp_id = 1
+        self.use_ssl = use_ssl
+        self.hostname = hostname if hostname else server
+        self.verify_cert = verify_cert
+        self.ca_certs = ca_certs if ca_certs else certifi.where()
+
+    @coroutine
+    def start(self):
+        """
+        start()
+        Connect to the RELP server and send 'open' command
+
+        :raises socket.error: if TCP connection fails
+        Note
+        ====
+        Tornado coroutine
+        """
+        self.client = TCPClient()
+        self.closed_connection_event = ToroEvent()
+        self.current_relp_id = 1
+        try:
+            connect_future = with_timeout(
+                timeout=timedelta(seconds=10),
+                future=self.client.connect(self.server, self.port)
+            )
+            self.stream = yield connect_future
+        except socket.error:
+            logger.error("TCP syslog client could not connect (socket.error)")
+            raise
+        except TimeoutError:
+            logger.error("TCP syslog client could not connect (timeout)")
+            raise
+
+        if self.use_ssl:
+            if self.verify_cert:
+                ssl_options = {
+                    'cert_reqs': ssl.CERT_REQUIRED,
+                    'ca_certs': self.ca_certs
+                }
+            else:
+                ssl_options = {
+                    'cert_reqs': ssl.CERT_NONE
+                }
+            try:
+                self.stream = yield self.stream.start_tls(
+                    server_side=False,
+                    server_hostname=self.hostname if self.verify_cert else None,
+                    ssl_options=ssl_options
+                )
+            except ssl.SSLError:
+                security_logger.exception("Error happened when opening SSL connection")
+                raise socket.error("Error happened when opening SSL connection")
+
+        self.stream.set_close_callback(self._on_stream_closed)
+
+        try:
+            yield self.stream.write(str(self.current_relp_id) + " " + RELP_OPEN_COMMAND)
+            response_id, code, data = yield self._read_one_response()
+            if code != 200:
+                logger.error("RELP server sent a BOO after the 'open' command")
+                raise ServerBoo(data)
+        except (ServerClose, StreamClosedError, ServerBoo) as ex:
+            logger.error("RELP opening connection failed")
+            raise_from(ServerClose("RELP opening connection failed"), ex)
+
+        # everything OK, increment the counter
+        self.current_relp_id += 1
+        raise Return(self.closed_connection_event)
+
+    def _on_stream_closed(self):
+        self.closed_connection_event.set()
+        if self.client:
+            self.client.close()
+
+    @coroutine
+    def _read_one_response(self):
+        response_id = yield self._read_next_token()
+        if response_id == "0":
+            raise ServerClose("RELP server announced a serverclose")
+        try:
+            response_id = int(response_id)
+            yield self._read_next_token()              # rsp
+            length = yield self._read_next_token()
+            length = int(length)
+            if length > 0:
+                data = yield self.stream.read_bytes(length)
+                data = data.strip('\r\n ').split(None, 1)
+                code = int(data[0])
+                cmddata = ''
+                if len(data) > 0:
+                    cmddata = data[1].strip('\r\n ')
+            else:
+                code = None
+                cmddata = ''
+        except (ValueError, TypeError) as ex:
+            raise_from(ServerBoo("did not understand relp server response"), ex)
+            return
+        raise Return((response_id, code, cmddata))
 
     @coroutine
     def _read_next_token(self):
@@ -65,148 +171,96 @@ class RELPClient(object):
         raise Return(token)
 
     @coroutine
-    def _read_one_response(self):
-        response_id = yield self._read_next_token()
-        if response_id == "0":
-            raise ServerClose()
-            pass
-        response_id = int(response_id)
-        yield self._read_next_token()              # rsp
-        length = yield self._read_next_token()
-        length = int(length)
-        if length > 0:
-            data = yield self.stream.read_bytes(length)
-            data = data.strip('\r\n ').split(None, 1)
-            code = int(data[0])
-            cmddata = ''
-            if len(data) > 0:
-                cmddata = data[1].strip('\r\n ')
-        else:
-            code = None
-            cmddata = ''
-        raise Return((response_id, code, cmddata))
-
-    @coroutine
-    def connect(self):
+    def stop(self):
         """
-        connect()
-        Connect to the RELP server and send 'open' command
-
-        :raises socket.error: if TCP connection fails
-
-
-        Note
-        ====
-        Tornado coroutine
-        """
-        try:
-            self.stream = yield self.client.connect(self.server, self.port)
-        except socket.error:
-            logger.error("RELP client could not connect (socket.error)")
-            raise
-
-        yield self.stream.write(str(self.current_relp_id) + " " + RELP_OPEN_COMMAND)
-        try:
-            response_id, code, data = yield self._read_one_response()
-        except ServerClose:
-            logger.error("RELP server refused the 'open' command and sent 'serverclose'")
-            raise
-
-        if code != 200:
-            logger.error("RELP server sent a BOO after the 'open' command")
-            raise ServerBoo(data)
-
-        # everything OK, increment the counter
-        self.current_relp_id += 1
-
-    @coroutine
-    def disconnect(self):
-        """
+        stop()
         Disconnect from the RELP server
         """
-        if self.stream:
+        if not self.stream.closed():
             try:
                 yield self.stream.write(str(self.current_relp_id) + " " + RELP_CLOSE_COMMAND)
             except StreamClosedError:
                 pass
             else:
-                #yield self._read_one_response()
+                # yield self._read_one_response()
                 self.stream.close()
         if self.client:
             self.client.close()
 
     @coroutine
-    def send_events(self, events):
+    def send_events(self, events, frmt="RFC5424"):
         """
-        send_events(events)
+        send_events(events, frmt="RFC5424")
         Send multiple events to the RELP server
 
         :param events: events to send (iterable of :py:class:`Event`)
         """
 
-        sent_messages_id = []
-        ack_messages_id = []
-        nack_messages_id = []
-        got_all_ack = ToroEvent()
+        acks = {}
         unexpected_close = ToroEvent()
+        n_start = self.current_relp_id
+        got_all_answers = ToroEvent()
 
         @coroutine
         def _read_streaming_responses():
-            try:
-                while not got_all_ack.is_set():
-                    try:
-                        response_id, code, data = yield self._read_one_response()
-                    except ServerClose:
-                        logger.error("_read_streaming_responses: server announced unexpected close")
-                        unexpected_close.set()
-                        return
-                    if code == 200 and response_id in sent_messages_id:
-                        ack_messages_id.append(response_id)
-                    elif code == 500 and response_id in sent_messages_id:
-                        nack_messages_id.append(response_id)
-                    else:
-                        logger.warning("What ?!")
-                        # todo: appropriate action
-            except StreamClosedError:
-                logger.error("_read_streaming_responses: stream closed error")
-                pass
+            while not got_all_answers.is_set():
+                try:
+                    response_id, code, data = yield self._read_one_response()
+                except ServerClose:
+                    logger.error("_read_streaming_responses: server announced unexpected close")
+                    self.stream.close()
+                    unexpected_close.set()
+                    return
+                except StreamClosedError:
+                    logger.error("_read_streaming_responses: stream closed error")
+                    unexpected_close.set()
+                    return
+                except ServerBoo:
+                    logger.error("_read_streaming_responses: did not understand response")
+                    self.stream.close()
+                    unexpected_close.set()
+                    return
+                acks[response_id - n_start] = True if code == 200 else False
 
         # receive the responses in background
         IOLoop.current().add_callback(_read_streaming_responses)
-        # send the events
-        for event in events:
-            bytes_event = event.dump_rfc5424()
-            line = str(len(bytes_event)) + ' ' + bytes_event
-            relp_line = str(self.current_relp_id) + " " + "syslog " + line + "\n"
-            yield self.stream.write(relp_line)
-            sent_messages_id.append(self.current_relp_id)
-            self.current_relp_id += 1
 
-        # wait that until we have all responses
-        while (not got_all_ack.is_set()) and (not unexpected_close.set()):
-            if len(sent_messages_id) == (len(ack_messages_id) + len(nack_messages_id)):
-                got_all_ack.set()
+        # send the events
+        try:
+            for event in events:
+                bytes_event = event.dump(frmt=frmt)
+                line = str(len(bytes_event)) + ' ' + bytes_event
+                relp_line = str(self.current_relp_id) + " " + "syslog " + line + "\n"
+                yield self.stream.write(relp_line)
+                self.current_relp_id += 1
+        except StreamClosedError:
+            unexpected_close.set()
+
+        nb_total_events = self.current_relp_id - n_start
+
+        # wait that until we have all answers
+        while (len(acks) != nb_total_events) and (not unexpected_close.set()):
             yield sleep(1)
-        if unexpected_close.set():
-            raise ServerClose()
-        raise Return(nack_messages_id)
+        if len(acks) == nb_total_events:
+            got_all_answers.set()
+        raise Return((not unexpected_close.is_set(), acks))
 
     @coroutine
-    def send_event(self, event):
+    def publish_event(self, event, routing_key=None, frmt="RFC5424"):
         """
-        send_event(event)
+        publish_event(event, routing_key=None, frmt="RFC5424")
         Send a single event to the RELP server
 
         :param event: event to send
         :type event: Event
         """
-        nack_messages_id = yield self.send_events([event])
-        raise Return(len(nack_messages_id) == 0)
+        status, _ = yield self.send_events([event], frmt=frmt)
+        raise Return((status, event))
 
     @coroutine
-    def send_message(self, message, source, severity, facility, app_name):
+    def send_message(self, message, source, severity, facility, app_name, frmt="RFC5424"):
         """
-        send_message(message, source, severity, facility, app_name)
+        send_message(message, source, severity, facility, app_name, frmt="RFC5424")
         Send a single message to the RELP server
 
         :param message: message to send
@@ -215,15 +269,15 @@ class RELPClient(object):
         :param facility: event facility
         :param app_name: event application name
         """
-        event = Event(severity=severity, facility=facility, app_name=app_name, source=source, timereported=arrow.utcnow(),
-                      message=message)
-        status = yield self.send_event(event)
+        event = Event(severity=severity, facility=facility, app_name=app_name, source=source,
+                      timereported=arrow.utcnow(), message=message)
+        status, _ = yield self.publish_event(event, frmt=frmt)
         raise Return(status)
 
     @coroutine
-    def send_file(self, filename, source, severity, facility, app_name):
+    def send_file(self, filename, source, severity, facility, app_name, frmt="RFC5424"):
         """
-        sendfile(filename, source, severity, facility, app_name)
+        send_file(filename, source, severity, facility, app_name, frmt="RFC5424")
         Send file to RELP server
 
         :param filename: file to send
@@ -237,11 +291,9 @@ class RELPClient(object):
             for line in stream:
                 line = line.strip(' \r\n')
                 if line:
-                    event = Event(severity=severity, facility=facility, app_name=app_name, source=source,
-                                  timereported=arrow.utcnow(), message=line)
-                    yield event
+                    yield Event(severity=severity, facility=facility, app_name=app_name, source=source,
+                                timereported=arrow.utcnow(), message=line)
 
         with open(filename, 'rb') as fhandle:
-            nack_messages_id = yield self.send_events(_file_to_events_generator(fhandle))
-        raise Return(nack_messages_id)
-
+            status, acks = yield self.send_events(_file_to_events_generator(fhandle), frmt=frmt)
+        raise Return((status, acks))

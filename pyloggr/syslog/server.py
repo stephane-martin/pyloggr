@@ -15,18 +15,85 @@ from os.path import expanduser
 import uuid
 import threading
 
+import certifi
 # noinspection PyCompatibility,PyPackageRequirements
-from past.builtins import basestring as basestr
+from future.builtins import str as real_unicode
+from future.builtins import bytes as real_bytes
 from tornado.iostream import SSLIOStream, StreamClosedError
 from tornado.tcpserver import TCPServer
 from tornado.gen import coroutine, Return
-from tornado.netutil import ssl_wrap_socket, errno_from_exception, bind_sockets, bind_unix_socket
+from tornado.netutil import errno_from_exception, bind_sockets, bind_unix_socket
+
+from pyloggr.utils.constants import CIPHERS
 
 logger = logging.getLogger(__name__)
 security_logger = logging.getLogger('security')
 
 
+def wrap_ssl_sock(sock, ssl_options):
+    """
+    Wrap a socket into a SSL socket
+
+    :param sock: socket to wrap
+    :param ssl_options: SSL options
+    :type ssl_options: pyloggr.config.SSLConfig
+    """
+    if hasattr(ssl, 'SSLContext'):
+        # python 2.7.9
+        context = ssl.SSLContext(protocol=ssl_options.ssl_version)
+        context.load_cert_chain(ssl_options.certfile, ssl_options.keyfile)
+        context.verify_mode = ssl_options.cert_reqs
+        if ssl_options.cert_reqs != ssl.CERT_NONE:
+            if ssl_options.ca_certs:
+                context.load_verify_locations(ssl_options.ca_certs)
+            else:
+                security_logger.info("Using certifi store to verify clients certs")
+                context.load_verify_locations(certifi.where())
+                # context.load_default_certs(ssl.Purpose.CLIENT_AUTH)
+
+        context.options |= getattr(ssl, 'OP_NO_SSLv2', 0)
+        context.options |= getattr(ssl, 'OP_NO_SSLv3', 0)
+        context.options |= getattr(ssl, 'OP_NO_COMPRESSION', 0)
+        context.options |= getattr(ssl, 'OP_CIPHER_SERVER_PREFERENCE', 0)
+        context.options |= getattr(ssl, 'OP_SINGLE_DH_USE', 0)
+        context.options |= getattr(ssl, 'OP_SINGLE_ECDH_USE', 0)
+        if ssl.HAS_ECDH:
+            context.set_ecdh_curve('prime256v1')
+        context.set_ciphers(CIPHERS)
+        return context.wrap_socket(
+            sock=sock,
+            server_side=True,
+            do_handshake_on_connect=False,
+            suppress_ragged_eofs=True
+        )
+    else:
+        # no SSLContext, we simply call wrap_socket
+        ca_certs = None
+        if ssl_options.cert_reqs != ssl.CERT_NONE:
+            if ssl_options.ca_certs:
+                ca_certs = ssl_options.ca_certs
+            else:
+                security_logger.info("Using certifi store to verify clients certs")
+                ca_certs = certifi.where()
+
+        return ssl.wrap_socket(
+            sock=sock,
+            keyfile=ssl_options.keyfile,
+            certfile=ssl_options.certfile,
+            server_side=True,
+            cert_reqs=ssl_options.cert_reqs,
+            ssl_version=ssl_options.ssl_version,
+            ca_certs=ca_certs,
+            do_handshake_on_connect=False,
+            suppress_ragged_eofs=True,
+            ciphers=CIPHERS
+        )
+
+
 class BaseSyslogServer(TCPServer):
+    """
+    Basic Syslog/RELP server
+    """
 
     def __init__(self, syslog_parameters):
         """
@@ -145,11 +212,9 @@ class BaseSyslogServer(TCPServer):
             return super(BaseSyslogServer, self)._handle_connection(connection, address)
 
         try:
-            connection = ssl_wrap_socket(
-                connection,
-                self.syslog_parameters.port_to_ssl_config[port],
-                server_side=True,
-                do_handshake_on_connect=False
+            connection = wrap_ssl_sock(
+                sock=connection,
+                ssl_options=self.syslog_parameters.port_to_ssl_config[port]
             )
         except ssl.SSLError as err:
             if err.args[0] == ssl.SSL_ERROR_EOF:
@@ -194,7 +259,7 @@ class SyslogParameters(object):
         self.unix_socket_names = []
         self.port_to_ssl_config = {}
 
-        for server in conf.servers.values():
+        for server in conf.values():
             if server.stype == 'unix':
                 self.unix_socket_names.append(server.socketname)
                 self.port_to_protocol[server.socketname] = 'socket'
@@ -203,11 +268,11 @@ class SyslogParameters(object):
                     self.port_to_protocol[port] = server.stype
 
         self.ssl_ports = list(
-            chain.from_iterable([server.ports for server in conf.servers.values() if server.ssl is not None])
+            chain.from_iterable([server.ports for server in conf.values() if server.ssl is not None])
         )
 
         for port in self.ssl_ports:
-            self.port_to_ssl_config[port] = [server.ssl for server in conf.servers.values() if port in server.ports][0]
+            self.port_to_ssl_config[port] = [server.ssl for server in conf.values() if port in server.ports][0]
 
     def bind_all_sockets(self):
         """
@@ -218,7 +283,7 @@ class SyslogParameters(object):
         """
 
         list_of_sockets = list()
-        for server in self.conf.servers.values():
+        for server in self.conf.values():
             address = '127.0.0.1' if server.localhost_only else ''
             for port in server.ports:
                 list_of_sockets.append(
@@ -251,7 +316,7 @@ class BaseSyslogClientConnection(object):
             # ipv4 or ipv6
             self.stream.socket.setsockopt(socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 1)
             self.stream.set_nodelay(True)
-        self.stream.set_close_callback(self.on_disconnect)
+        self.stream.set_close_callback(self.on_stream_closed)
         self.client_id = str(uuid.uuid4())
 
         self.client_host = ''
@@ -292,17 +357,13 @@ class BaseSyslogClientConnection(object):
                 break
         raise Return(token)
 
-    @coroutine
-    def on_disconnect(self):
+    def on_stream_closed(self):
         """
-        on_disconnect()
+        on_stream_closed()
         Called when a client has been disconnected
-
-        .. note:: Tornado coroutine
         """
         self.disconnecting.set()
         logger.info("Syslog client has been disconnected {}:{}".format(self.client_host, self.client_port))
-        yield []
 
     def disconnect(self):
         """
@@ -476,7 +537,7 @@ class BaseSyslogClientConnection(object):
     def _set_socket(self):
         try:
             server_sockname = self.stream.socket.getsockname()
-            if isinstance(server_sockname, basestr):
+            if isinstance(server_sockname, real_bytes) or isinstance(server_sockname, real_unicode):
                 self.server_port = server_sockname       # socket unix
             elif len(server_sockname) == 2:
                 self.server_port = server_sockname[1]    # ipv4
@@ -490,11 +551,11 @@ class BaseSyslogClientConnection(object):
         except StreamClosedError:
             logger.info("The client went away before it could be dispatched")
             self.disconnect()
-            return
+            raise
         except ValueError:
             logger.warning("Unknown socket type")
             self.disconnect()
-            return
+            raise
 
     @coroutine
     def on_connect(self):
@@ -508,31 +569,13 @@ class BaseSyslogClientConnection(object):
         ====
         Tornado coroutine
         """
-        self._set_socket()
 
         try:
-            server_sockname = self.stream.socket.getsockname()
-            if isinstance(server_sockname, basestr):
-                server_port = server_sockname       # socket unix
-            elif len(server_sockname) == 2:
-                server_port = server_sockname[1]    # ipv4
-                (self.client_host, self.client_port) = self.stream.socket.getpeername()
-            elif len(server_sockname) == 4:
-                server_port = server_sockname[1]    # ipv6
-                (self.client_host, self_client_port, self.flowinfo, self.scopeid) = self.stream.socket.getpeername()
-            else:
-                raise ValueError
+            self._set_socket()
+        except (StreamClosedError, ValueError):
+            return
 
-        except StreamClosedError:
-            logger.info("The client went away before it could be dispatched")
-            self.disconnect()
-            return
-        except ValueError:
-            logger.warning("Unknown socket type")
-            self.disconnect()
-            return
         t = self.syslog_parameters.port_to_protocol.get(self.server_port, None)
-
         if t is None:
             logger.warning("Don't know what to do with port '{}'".format(self.server_port))
             self.disconnect()
@@ -540,13 +583,12 @@ class BaseSyslogClientConnection(object):
 
         dispatch_function = self.dispatch_dict.get(t, None)
         if dispatch_function is None:
+            logger.warning("on_connect: no dispatch function")
             self.disconnect()
             return
 
-        self.server_port = server_port
-
         logger.info('New client is connected {}:{} to {}'.format(
-            self.client_host, self.client_port, server_port
+            self.client_host, self.client_port, self.server_port
         ))
 
         # noinspection PyCallingNonCallable
