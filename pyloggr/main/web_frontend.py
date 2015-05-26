@@ -10,13 +10,15 @@ from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
 from tornado.netutil import bind_sockets
-from tornado.gen import coroutine
+from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import PeriodicCallback, IOLoop
 from jinja2 import Environment, PackageLoader
 import momoko
+# noinspection PyCompatibility
 import psycopg2
 
 from pyloggr.rabbitmq import management
+from pyloggr.rabbitmq import Configuration as RMQConfig
 from pyloggr.rabbitmq.notifications_consumer import NotificationsConsumer
 from pyloggr.rabbitmq import RabbitMQConnectionError
 from pyloggr.utils.observable import Observable, Observer
@@ -32,7 +34,7 @@ class SyslogServers(Observable, Observer):
     """
     Data about the running Pyloggr's syslog servers
 
-    Notified by rabbitmq
+    Notified by Rabbitmq
     Observed by Websocket
     """
     def __init__(self):
@@ -53,7 +55,6 @@ class SyslogServers(Observable, Observer):
                 'server_port': client['server_port']
             } for client in syslog_server.clients}
         } for syslog_server in cache.syslog_list.values()}
-
 
     def notified(self, d):
         # get updates from rabbitmq
@@ -112,17 +113,20 @@ class Status(Observable):
 # noinspection PyAbstractClass
 class SyslogClientsFeed(WebSocketHandler, Observer):
     """
-    a Websocket used to talk with the browser
+    Websocket used to talk with the browser
     """
 
     def open(self):
         logger.debug("Websocket is opened")
         self.set_nodelay(True)
-        # get notifications from other pyloggr process
-        # get notifications from RabbitMQ management API
+
+        # get status of pyloggr processes
         status.register(self)
+        # get notifications from syslog servers
         syslog_servers.register(self)
+        # get stats from RabbitMQ management API
         rabbitmq_stats.register(self)
+        # get stats from PGSQL
         pgsql_stats.register(self)
 
     def notified(self, d):
@@ -160,45 +164,135 @@ class QueryLogs(RequestHandler):
     """
     pass
 
-
 class StatusPage(RequestHandler):
     """
     Displays a status page
     """
 
     def get(self):
-        cache_status = cache.available
-        # noinspection PyUnresolvedReferences
-        rabbitmq_status = status.rabbitmq is not None
-        syslogs = []
-        if cache_status:
-            syslogs = cache.syslog_list
-
-        html_output = self.application.templates['status'].render(
-            syslogs=syslogs,
-            cache_status=cache_status,
-            rabbitmq_status=rabbitmq_status,
-            rabbitmq_queues=rabbitmq_stats.queues
-        )
+        html_output = self.application.templates['status'].render()
         self.write(html_output)
 
 
 class Upload(RequestHandler):
     pass
     # todo: upload log files via form or via POST API
-    # put files in HARVEST directory
+
+
+class PgSQLStats(Observable):
+    """
+    Gather information from the database
+    """
+    def __init__(self):
+        Observable.__init__(self)
+        self._updating = False
+        self.stats = 0
+
+    @coroutine
+    def update(self):
+        if self._updating:
+            return
+        self._updating = True
+        db_conn = None
+        stats = 0
+        status_inc = True
+        for shipper in Config.SHIPPER2PGSQL:
+
+            try:
+                db_conn = yield momoko.Op(momoko.Connection().connect, Config.SHIPPER2PGSQL[shipper].dsn)
+                cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(
+                    Config.SHIPPER2PGSQL[shipper].tablename
+                ))
+                stats += cursor.fetchone()[0]
+            except psycopg2.Error:
+                logger.exception("Database seems down")
+                status_inc = False
+            finally:
+                if db_conn is not None:
+                    db_conn.close()
+
+        status.postgresql = status_inc
+        self.stats = stats
+        self._updating = False
+        self.notify()
+
+    def notify(self):
+        d = dict()
+        d['action'] = 'pgsql.stats'
+        # noinspection PyUnresolvedReferences
+        d['status'] = status.postgresql
+        d['stats'] = self.stats
+        self.notify_observers(d)
+
+
+class RabbitMQStats(Observable):
+    """
+    Gather information from RabbitMQ management API
+    """
+    queue_names = [machine.source.queue for machine in Config.MACHINES.values()]
+    queue_names.extend(shipper.source_queue for shipper in Config.SHIPPER2PGSQL.values())
+
+    def __init__(self):
+        Observable.__init__(self)
+        self.queues = {name: {} for name in self.queue_names}
+        self._updating = False
+
+        self._rabbitmq_api_client = management.Client(
+            host=Config.RABBITMQ_HTTP,
+            user=Config.RABBITMQ.user,
+            passwd=Config.RABBITMQ.password,
+            timeout=13
+        )
+
+    @coroutine
+    def update(self):
+        if self._updating:
+            return
+
+        self._updating = True
+        results = dict()
+        try:
+            for name in self.queue_names:
+                results[name] = yield self._rabbitmq_api_client.get_queue(Config.RABBITMQ.vhost, name)
+        except management.NetworkError:
+            logger.warning("RabbitMQ management API does not seem available")
+            status.rabbitmq = False
+        except management.HTTPError as ex:
+            logger.warning("Management API answered error code: '{}'".format(ex.status))
+            logger.debug("Reason: {}".format(ex.reason))
+            status.rabbitmq = False
+        else:
+            status.rabbitmq = True
+
+        if status.rabbitmq:
+            for name in self.queue_names:
+                self.queues[name]['messages'] = results[name]['messages']
+        else:
+            self.queues = {name: {} for name in self.queue_names}
+
+        self._updating = False
+        self.notify()
+
+    def notify(self):
+        d = dict()
+        d['action'] = 'queues.stats'
+        # noinspection PyUnresolvedReferences
+        d['status'] = status.rabbitmq
+        d['queues'] = self.queues
+        self.notify_observers(d)
 
 
 class PyloggrApplication(Application):
 
     def __init__(self, url_prefix):
-
         urls = [
             ('/status/?', StatusPage, 'status'),
             ('/query/?', QueryLogs, 'query'),
             ('/websocket/?', SyslogClientsFeed, 'websocket'),
         ]
+
         handlers = [url(url_prefix + path, method, name=name) for (path, method, name) in urls]
+
         settings = {
             'autoreload': False,
             'debug': True,
@@ -230,20 +324,23 @@ class WebServer(object):
 
     @coroutine
     def launch(self):
-        # at this point redis has been initialized
+        # at this point, redis has been initialized...
         global syslog_servers, notifications_consumer
+        # ... so we can get information about syslog servers from redis
         syslog_servers = SyslogServers()
+        # ... and notifications (updates) from rabbitmq are sent to syslog_servers
         notifications_consumer.register(syslog_servers)
-
         IOLoop.instance().add_callback(self.get_rabbit_notifications)
+
         self.http_server.add_sockets(self.sockets)
+        # periodic updates of stats
         self.start_periodic()
 
     @coroutine
     def get_rabbit_notifications(self):
         try:
             lost_rabbit_connection = yield notifications_consumer.start()
-        except RabbitMQConnectionError:
+        except (RabbitMQConnectionError, TimeoutError):
             # no rabbitmq connection ==> no notifications
             yield sleep(60)
             IOLoop.instance().add_callback(self.get_rabbit_notifications)
@@ -259,7 +356,7 @@ class WebServer(object):
     def shutdown(self):
         yield self.http_server.close_all_connections()
         self.stop_periodic()
-        notifications_consumer.stop()
+        yield notifications_consumer.stop()
         self.http_server.stop()
 
     def start_periodic(self):
@@ -281,106 +378,20 @@ class WebServer(object):
         yield pgsql_stats.update()
         status.redis = cache.available
 
-
-class PgSQLStats(Observable):
-    """
-    Gather information from the database
-    """
-    def __init__(self):
-        Observable.__init__(self)
-        self._updating = False
-        self.stats = None
-
-    @coroutine
-    def update(self):
-        if self._updating:
-            return
-        self._updating = True
-        db_conn = None
-        stats = None
-        try:
-            db_conn = yield momoko.Op(momoko.Connection().connect, Config.POSTGRESQL.DSN)
-            cursor = yield momoko.Op(db_conn.execute, 'SELECT COUNT(*) FROM {};'.format(Config.POSTGRESQL.tablename))
-            stats = cursor.fetchone()[0]
-        except psycopg2.Error:
-            logger.exception("Database seems down")
-            status.postgresql = False
-        else:
-            status.postgresql = True
-            self.stats = stats
-        finally:
-            if db_conn is not None:
-                db_conn.close()
-
-        self._updating = False
-        self.notify()
-
-    def notify(self):
-        d = dict()
-        d['action'] = 'pgsql.stats'
-        # noinspection PyUnresolvedReferences
-        d['status'] = status.postgresql
-        d['stats'] = self.stats
-        self.notify_observers(d)
-
-
-class RabbitMQStats(Observable):
-    """
-    Gather information from RabbitMQ management API
-    """
-    queue_names = [Config.PARSER_CONSUMER.queue, Config.PGSQL_CONSUMER.queue]
-
-    def __init__(self):
-        Observable.__init__(self)
-        self.queues = {name: {} for name in self.queue_names}
-        self._updating = False
-
-        self._rabbitmq_api_client = management.Client(
-            host=Config.RABBITMQ_HTTP,
-            user=Config.NOTIFICATIONS.user,
-            passwd=Config.NOTIFICATIONS.password,
-            timeout=13
-        )
-
-    @coroutine
-    def update(self):
-        if self._updating:
-            return
-
-        self._updating = True
-        results = dict()
-        try:
-            for name in self.queue_names:
-                results[name] = yield self._rabbitmq_api_client.get_queue(Config.NOTIFICATIONS.vhost, name)
-        except management.NetworkError:
-            logger.warning("RabbitMQ management API does not seem available")
-            status.rabbitmq = False
-        except management.HTTPError as ex:
-            logger.warning("Management API answered error code: '{}'".format(ex.status))
-            logger.debug("Reason: {}".format(ex.reason))
-            status.rabbitmq = False
-        else:
-            status.rabbitmq = True
-
-        if status.rabbitmq:
-            for name in self.queue_names:
-                self.queues[name]['messages'] = results[name]['messages']
-        else:
-            self.queues = {name: {} for name in self.queue_names}
-
-        self._updating = False
-        self.notify()
-
-    def notify(self):
-        d = dict()
-        d['action'] = 'queues.stats'
-        # noinspection PyUnresolvedReferences
-        d['status'] = status.rabbitmq
-        d['queues'] = self.queues
-        self.notify_observers(d)
+# todo: perform init in Webserver instead
 
 status = Status()
 rabbitmq_stats = RabbitMQStats()
 pgsql_stats = PgSQLStats()
 syslog_servers = None
-notifications_consumer = NotificationsConsumer(Config.NOTIFICATIONS, 'pyloggr.*.*')
+notifications_consumer = NotificationsConsumer(
+    rabbitmq_config=RMQConfig(
+        host=Config.RABBITMQ.host,
+        port=Config.RABBITMQ.port,
+        user=Config.RABBITMQ.user,
+        password=Config.RABBITMQ.password,
+        vhost=Config.RABBITMQ.vhost,
+        exchange=Config.NOTIFICATIONS.exchange,
+        binding_key=Config.NOTIFICATIONS.binding_key
+    )
+)
