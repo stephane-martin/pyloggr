@@ -3,6 +3,7 @@ __author__ = 'stef'
 
 import logging
 from abc import ABCMeta, abstractmethod
+from future.utils import with_metaclass
 from tornado.ioloop import IOLoop
 import ujson
 
@@ -17,7 +18,7 @@ class Observable(object):
 
     def __init__(self):
         self.observers = list()
-        self.queue = None
+        self.publisher = None
 
     def register(self, observer):
         """
@@ -45,7 +46,7 @@ class Observable(object):
         """
         if self.observers:
             del self.observers[:]
-        self.queue = None
+        self.publisher = None
 
     def notify_observers(self, d, routing_key=None):
         """
@@ -71,11 +72,11 @@ class NotificationProducer(Observable):
     """
     A NotificationProducer produces some notifications and sends them to RabbitMQ
     """
-    def register_queue(self, publisher):
-        self.queue = publisher
+    def register_publisher(self, publisher):
+        self.publisher = publisher
 
-    def unregister_queue(self):
-        self.queue = None
+    def unregister_publisher(self):
+        self.publisher = None
 
     def notify_observers(self, d, routing_key=None):
         """
@@ -95,7 +96,7 @@ class NotificationProducer(Observable):
             except Exception:
                 logger.exception("notify_observers: swallowing exception")
 
-        if not self.queue:
+        if not self.publisher:
             logger.debug("No notification queue")
             return
 
@@ -105,7 +106,7 @@ class NotificationProducer(Observable):
             routing_key = "pyloggr.generic.notification"
 
         json_message = ujson.dumps(d)
-        future = self.queue.publish(
+        future = self.publisher.publish(
             exchange='pyloggr.pubsub',
             body=json_message,
             routing_key=routing_key,
@@ -122,11 +123,10 @@ class NotificationProducer(Observable):
             logger.exception("Exception happened while publishing notification to RabbitMQ")
 
 
-class Observer(object):
+class Observer(with_metaclass(ABCMeta, object)):
     """
     Implemented by classes that should be observers
     """
-    __metaclass__ = ABCMeta
 
     @abstractmethod
     def notified(self, *args, **kwargs):
