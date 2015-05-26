@@ -153,13 +153,14 @@ class FSShipperProcess(PyloggrProcess):
                 password=Config.RABBITMQ.password,
                 vhost=Config.RABBITMQ.vhost,
                 queue=shipper_config.source_queue
-                #qos=shipper_config.event_stack_size + 10,
-                #binding_key=None
+                # qos=shipper_config.event_stack_size + 10,
+                # binding_key=None
             )
             process = FilesystemShipper(consumer_config, shipper_config)
             self.pyloggr_process.append(process)
             self.logger.info("Starting FS shipper '{}'".format(name))
             IOLoop.instance().add_callback(process.launch)
+
 
 class SyslogShipperProcess(PyloggrProcess):
     """Ships events to a remote syslog server"""

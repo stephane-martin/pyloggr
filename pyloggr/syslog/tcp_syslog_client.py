@@ -17,7 +17,6 @@ import certifi
 from tornado.gen import coroutine, Return, with_timeout, TimeoutError
 from tornado.iostream import StreamClosedError
 from tornado.tcpclient import TCPClient
-from tornado.netutil import ssl_match_hostname, SSLCertificateError
 from toro import Event as ToroEvent
 
 from pyloggr.event import Event
@@ -40,7 +39,8 @@ class SyslogClient(object):
         Should the client connect with SSL
     """
 
-    def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None):
+    def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None,
+                 client_key=None, client_cert=None):
         self.server = server
         self.port = port
         self.stream = None
@@ -50,6 +50,8 @@ class SyslogClient(object):
         self.hostname = hostname if hostname else server
         self.verify_cert = verify_cert
         self.ca_certs = ca_certs if ca_certs else certifi.where()
+        self.client_key = client_key
+        self.client_cert = client_cert
 
     @coroutine
     def start(self):
@@ -73,15 +75,15 @@ class SyslogClient(object):
             raise
 
         if self.use_ssl:
+            ssl_options = {}
             if self.verify_cert:
-                ssl_options = {
-                    'cert_reqs': ssl.CERT_REQUIRED,
-                    'ca_certs': self.ca_certs
-                }
+                ssl_options['cert_reqs'] = ssl.CERT_REQUIRED,
+                ssl_options['ca_certs'] = self.ca_certs
             else:
-                ssl_options = {
-                    'cert_reqs': ssl.CERT_NONE
-                }
+                ssl_options['cert_reqs'] = ssl.CERT_NONE
+            if self.client_key is not None and self.client_cert is not None:
+                ssl_options['certfile'] = self.client_cert
+                ssl_options['keyfile'] = self.client_key
             try:
                 self.stream = yield self.stream.start_tls(
                     server_side=False,
@@ -116,12 +118,14 @@ class SyslogClient(object):
         Send multiple events to the syslog server
 
         :param events: events to send (iterable of :py:class:`Event`)
+        :param frmt: event dumping format
         """
         f = list(imap(lambda event: self.publish_event(event, frmt=frmt), events))
         results = yield f
         results = [status for status, _ in results]
         raise Return(all(results))
 
+    # noinspection PyUnusedLocal
     @coroutine
     def publish_event(self, event, routing_key=None, frmt="RFC5424"):
         """
@@ -129,6 +133,8 @@ class SyslogClient(object):
         Send a single event to the syslog server
 
         :param event: event to send
+        :param frmt: event dumping format
+        :param routing_key: not used, just here for function signature
         :type event: Event
         """
         bytes_event = event.dump(frmt=frmt)
@@ -151,6 +157,7 @@ class SyslogClient(object):
         :param severity: event severity
         :param facility: event facility
         :param app_name: event application name
+        :param frmt: event dumping format
         """
         message = message.strip('\r\n ')
         if not message:
@@ -172,6 +179,7 @@ class SyslogClient(object):
         :param severity: log severity
         :param facility: log facility
         :param app_name: log application name
+        :param frmt: event dumping format
         """
         def _file_to_events_generator(stream):
             for line in stream:

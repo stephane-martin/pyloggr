@@ -55,7 +55,8 @@ class RELPClient(object):
         Should the client connect with SSL
     """
 
-    def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None):
+    def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None,
+                 client_key=None, client_cert=None):
         self.server = server
         self.port = port
         self.stream = None
@@ -66,6 +67,8 @@ class RELPClient(object):
         self.hostname = hostname if hostname else server
         self.verify_cert = verify_cert
         self.ca_certs = ca_certs if ca_certs else certifi.where()
+        self.client_key = client_key
+        self.client_cert = client_cert
 
     @coroutine
     def start(self):
@@ -95,15 +98,15 @@ class RELPClient(object):
             raise
 
         if self.use_ssl:
+            ssl_options = {}
             if self.verify_cert:
-                ssl_options = {
-                    'cert_reqs': ssl.CERT_REQUIRED,
-                    'ca_certs': self.ca_certs
-                }
+                ssl_options['cert_reqs'] = ssl.CERT_REQUIRED,
+                ssl_options['ca_certs'] = self.ca_certs
             else:
-                ssl_options = {
-                    'cert_reqs': ssl.CERT_NONE
-                }
+                ssl_options['cert_reqs'] = ssl.CERT_NONE
+            if self.client_key is not None and self.client_cert is not None:
+                ssl_options['certfile'] = self.client_cert
+                ssl_options['keyfile'] = self.client_key
             try:
                 self.stream = yield self.stream.start_tls(
                     server_side=False,
@@ -194,6 +197,7 @@ class RELPClient(object):
         Send multiple events to the RELP server
 
         :param events: events to send (iterable of :py:class:`Event`)
+        :param frmt: event dumping format
         """
 
         acks = {}
@@ -245,6 +249,7 @@ class RELPClient(object):
             got_all_answers.set()
         raise Return((not unexpected_close.is_set(), acks))
 
+    # noinspection PyUnusedLocal
     @coroutine
     def publish_event(self, event, routing_key=None, frmt="RFC5424"):
         """
@@ -252,6 +257,8 @@ class RELPClient(object):
         Send a single event to the RELP server
 
         :param event: event to send
+        :param routing_key: not used, just here for signature
+        :param frmt: event dumping format
         :type event: Event
         """
         status, _ = yield self.send_events([event], frmt=frmt)
@@ -268,6 +275,7 @@ class RELPClient(object):
         :param severity: event severity
         :param facility: event facility
         :param app_name: event application name
+        :param frmt: event dumping format
         """
         event = Event(severity=severity, facility=facility, app_name=app_name, source=source,
                       timereported=arrow.utcnow(), message=message)
@@ -285,6 +293,7 @@ class RELPClient(object):
         :param severity: log severity
         :param facility: log facility
         :param app_name: log application name
+        :param frmt: event dumping format
         """
 
         def _file_to_events_generator(stream):

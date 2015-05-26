@@ -49,7 +49,10 @@ def set_config_env(config_dir):
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not exists(config_env):
         raise CommandError("Config directory '{}' doesn't exists".format(config_env))
-    set_configuration(config_env)
+    try:
+        set_configuration(config_env)
+    except ValueError as ex:
+        raise CommandError(ex)
 
 
 def _check_pid(name):

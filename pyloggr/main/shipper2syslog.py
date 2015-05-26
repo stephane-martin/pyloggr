@@ -56,9 +56,21 @@ class SyslogShipper(object):
         if self.shutting_down or self.stopping:
             return
         self.syslog_client = RELPClient(
-            self.shipper_config.host, self.shipper_config.port, self.shipper_config.use_ssl
+            self.shipper_config.host, self.shipper_config.port,
+            use_ssl=self.shipper_config.use_ssl,
+            verify_cert=self.shipper_config.verify,
+            hostname=self.shipper_config.hostname,
+            ca_certs=self.shipper_config.ca_certs,
+            client_cert=self.shipper_config.client_cert,
+            client_key=self.shipper_config.client_key
         ) if self.shipper_config.protocol.lower() == "relp" else SyslogClient(
-            self.shipper_config.host, self.shipper_config.port, self.shipper_config.use_ssl
+            self.shipper_config.host, self.shipper_config.port,
+            use_ssl=self.shipper_config.use_ssl,
+            verify_cert=self.shipper_config.verify,
+            hostname=self.shipper_config.hostname,
+            ca_certs=self.shipper_config.ca_certs,
+            client_cert=self.shipper_config.client_cert,
+            client_key=self.shipper_config.client_key
         )
         try:
             self.closed_syslog_event = yield self.syslog_client.start()
