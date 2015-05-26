@@ -231,6 +231,7 @@ class SyslogServerList(object):
         except RedisError:
             return None
 
+    # noinspection PyDocstring
     def keys(self):
         try:
             keys = list(int(key) for key in self.redis_conn.smembers(syslog_key))
@@ -239,6 +240,7 @@ class SyslogServerList(object):
         except RedisError:
             return None
 
+    # noinspection PyDocstring
     def values(self):
         return [self[key] for key in self.keys()]
 
@@ -326,10 +328,12 @@ class Cache(object):
         cls.redis_child = None
         cls.redis_conn = None
 
+    # noinspection PyDocstring
     @property
     def syslog_list(self):
         return self._syslog
 
+    # noinspection PyDocstring
     @property
     def rescue(self):
         return self._rescue
@@ -351,7 +355,7 @@ class Cache(object):
 
 class RescueQueue(object):
     """
-
+    Encapsulate a queue that can store events in Redis or on the filesystem
     """
     def __init__(self, redis_conn):
         """
@@ -412,15 +416,18 @@ class RescueQueue(object):
                         logger.exception("_store_event_on_fs: error while moving event. Abort.")
                         raise
         try:
-            event.dumps(fname)
+            event.dump(frmt="JSON", fname=fname)
+            return True
         except OSError:
-            pass
+            logger.exception("_store_event_on_fs: error while dumping the event to '{}'".format(fname))
+            return False
 
     def append(self, event=None, bytes_event=None):
         """
         Append an event to the rescue queue
 
         :type event: pyloggr.event.Event
+        :type bytes_event: bytes
         :return: True if the event has been successfully added to the rescue queue
         """
         if event is None and bytes_event is None:
@@ -431,7 +438,7 @@ class RescueQueue(object):
             except InvalidSignature:
                 security_logger.error("Append to cache: the given event has an invalid HMAC. Abort.")
                 return False
-            bytes_event = event.dumps()
+            bytes_event = event.dump_json()
         if event is None:
             try:
                 event = Event.parse_bytes_to_event(bytes_event, hmac=True)
@@ -445,13 +452,18 @@ class RescueQueue(object):
             self.redis_conn.rpush(rescue_key, bytes_event)
         except RedisError:
             try:
-                self._store_event_on_fs(event)
-                return True
+                return self._store_event_on_fs(event)
             except OSError:
                 return False
         return True
 
     def __len__(self):
+        """
+        Return the number of events in rescue queue (Redis + FS)
+
+        :return: number of events
+        :rtype: int
+        """
         try:
             redis_len = self.redis_conn.llen(rescue_key)
         except RedisError:
@@ -467,7 +479,7 @@ class RescueQueue(object):
         return redis_len + len(fnames)
 
     @staticmethod
-    def read_all_events_from_fs():
+    def _read_all_events_from_fs():
         fnames = [join(Config.RESCUE_QUEUE_DIRNAME, fname) for fname in os.listdir(Config.RESCUE_QUEUE_DIRNAME)]
         fnames = [fname for fname in fnames if isfile(fname) and basename(fname).startswith('event_')]
         events = []
@@ -489,7 +501,12 @@ class RescueQueue(object):
                     events.append(event)
         return events
 
-    def get_generator(self):
+    def event_generator(self):
+        """
+        Return a generator that yields events Redis and FS
+
+        :return: generator
+        """
         while True:
             try:
                 bytes_event = self.redis_conn.lpop(rescue_key)
@@ -502,20 +519,16 @@ class RescueQueue(object):
                     # no more events in redis, next we check events on FS
                     break
                 try:
-                    event = Event.parse_bytes_to_event(bytes_event, hmac=True, json=True)
+                    yield Event.parse_bytes_to_event(bytes_event, hmac=True, json=True)
                 except InvalidSignature:
                     security_logger.error("get_generator: Dropping one event from Redis with invalid signature")
-                    event = None
+                    continue
                 except ParsingError:
                     logger.error("get_generator: Dropping one unparsable event")
-                    event = None
-                if event:
-                    yield event
+                    continue
 
         # now let's get events from FS
-
-        for event in self.read_all_events_from_fs():
+        for event in self._read_all_events_from_fs():
             yield event
-
 
 cache = Cache()
