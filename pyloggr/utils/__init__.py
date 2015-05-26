@@ -19,10 +19,10 @@ from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 from unidecode import unidecode
 
-from .fix_unicode import to_unicode
+from .fix_unicode import to_unicode, to_bytes
 
 
-def sleep(duration):
+def sleep(duration, shutting_down_event=None):
     """
     Return a Future that just 'sleeps'. The Future can be interrupted in case of process shutdown.
 
@@ -32,8 +32,18 @@ def sleep(duration):
     f = Future()
 
     def _nothing():
-        f.set_result(None)
+        if not f.done():
+            f.set_result(None)
 
+    def _check_event():
+        if not f.done():
+            if shutting_down_event.is_set():
+                f.set_result(None)
+            else:
+                IOLoop.current().call_later(1, _check_event)
+
+    if shutting_down_event is not None:
+        _check_event()
     timeout = IOLoop.current().call_later(duration, _nothing)
     timeout.callback.sleeper = True
     return f
@@ -88,6 +98,3 @@ def sanitize_key(key):
 def sanitize_tag(tag):
     return _not_allowed_chars_in_tag.sub(u'', to_unicode(tag))
 
-def escape_param_value(param_value):
-    # RFC 5424: PARAM-VALUE = UTF-8-STRING ; characters '"', '\' and ']' MUST be escaped.
-    return _escape_re.sub(r'\\\1', to_unicode(param_value))
