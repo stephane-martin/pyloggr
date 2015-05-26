@@ -1,48 +1,90 @@
 # encoding: utf-8
 
 """
-Blabla
+Simplified queues
 """
 
 __author__ = 'stef'
 
 import threading
 from collections import deque
-from functools import partial
 
-from queue import Empty
+from cytoolz import remove
+# noinspection PyCompatibility
+from concurrent.futures import Future as RealFuture
 from tornado.ioloop import IOLoop
-from toro import _TimeoutFuture, _consume_expired_waiters
+from tornado.gen import Task, TimeoutError
+from tornado.concurrent import Future
 
 
-class ThreadSafeQueue11(object):
+class ThreadSafeQueue(object):
+    """
+    Simplified thread-safe queue, without size limit
+    """
+
     def __init__(self):
         self.lock = threading.Lock()
         self.queue = deque()
+        self._waiting = deque()
 
     def put(self, item):
+        """
+        Put an item on the queue
+        """
         with self.lock:
-            self.queue.append(item)
+            # remove waiters that have expired
+            self._waiting = deque(remove(lambda w: w.done(), self._waiting))
+            if len(self._waiting) > 0:
+                waiter = self._waiting.popleft()
+                self.queue.append(item)
+                waiter.set_result(self.queue.popleft())
+            else:
+                self.queue.append(item)
 
-    def put_many(self, items):
+    def get_wait(self, deadline=None):
+        """
+        Wait for an available item and pop it from the queue
+        """
+        f = RealFuture()
+
+        def _expired():
+            if not f.done():
+                f.set_exception(TimeoutError())
+
+        if deadline:
+            IOLoop.current().add_timeout(deadline, _expired)
+
         with self.lock:
-            self.queue.extend(items)
+            if len(self.queue) > 0:
+                f.set_result(self.queue.popleft())
+            else:
+                self._waiting.append(f)
+            return f
 
     def get_all(self):
+        """
+        Pop all items from the queue, without waiting
+        """
         with self.lock:
-            if not len(self.queue):
-                return []
+            if len(self.queue) == 0:
+                return deque()
             l, self.queue = self.queue, deque()
             return l
 
     def get(self):
+        """
+        Pop one item from the queue, without waiting
+        """
         with self.lock:
-            if not len(self.queue):
+            if len(self.queue) == 0:
                 return None
             return self.queue.popleft()
 
 
 class SimpleToroQueue(object):
+    """
+    Simplified Toro queue without size limit
+    """
 
     def __init__(self, io_loop=None):
         self.io_loop = io_loop or IOLoop.current()
@@ -50,59 +92,91 @@ class SimpleToroQueue(object):
         self.queue = deque()
 
     def qsize(self):
-        """Number of items in the queue"""
+        """
+        Return number of items in the queue
+        """
         return len(self.queue)
 
     def empty(self):
-        """Return ``True`` if the queue is empty, ``False`` otherwise."""
+        """
+        Return ``True`` if the queue is empty, ``False`` otherwise
+        """
         return not self.queue
 
-    def put_nowait(self, item):
+    def put(self, item):
         """
-        Put an item into the queue.
+        Put an item into the queue (without waiting)
+
+        :param item: item to add
         """
-        _consume_expired_waiters(self.getters)
+        self.getters = deque(remove(lambda gettr: gettr.done(), self.getters))
         if self.getters:
-            assert not self.queue, "queue non-empty, why are getters waiting?"
             getter = self.getters.popleft()
             self.queue.append(item)
             getter.set_result(self.queue.popleft())
         else:
             self.queue.append(item)
 
-    def get(self, deadline=None):
-        """Remove and return an item from the queue. Returns a Future.
-
-        The Future blocks until an item is available, or raises
-        :exc:`toro.Timeout`.
-
-        :Parameters:
-          - `deadline`: Optional timeout, either an absolute timestamp
-            (as returned by ``io_loop.time()``) or a ``datetime.timedelta`` for a
-            deadline relative to the current time.
+    def get_wait(self, deadline=None):
         """
-        future = _TimeoutFuture(deadline, self.io_loop)
-        if self.qsize():
-            future.set_result(self.queue.popleft())
-        else:
-            self.getters.append(future)
+        Remove and return an item from the queue. Returns a Future.
 
-        return future
+        The Future blocks until an item is available, or raises :exc:`toro.Timeout`.
+
+        :param deadline: Optional timeout, either an absolute timestamp (as returned by ``io_loop.time()``) or a
+        ``datetime.timedelta`` for a deadline relative to the current time.
+        """
+        f = Future()
+
+        def _expired():
+            if not f.done():
+                f.set_exception(TimeoutError())
+
+        if deadline:
+            IOLoop.current().add_timeout(deadline, _expired)
+
+        if len(self.queue) > 0:
+            f.set_result(self.queue.popleft())
+        else:
+            self.getters.append(f)
+        return f
 
     def get_nowait(self):
-        """Remove and return an item from the queue without blocking.
+        """
+        Remove and return an item from the queue without blocking.
 
-        Return an item if one is immediately available, else raise
-        :exc:`queue.Empty`.
+        Return an item if one is immediately available, else raise :exc:`queue.Empty`.
         """
         if self.qsize():
             return self.queue.popleft()
         else:
-            raise Empty
+            return None
 
-    def get_all_nowait(self):
+    def get_all(self):
+        """
+        Remove ans return all items from the queue, without blocking
+        """
         if self.qsize():
             l, self.queue = self.queue, deque()
             return l
         else:
-            raise Empty
+            return deque()
+
+
+def TimeoutTask(func, deadline=None, *args, **kwargs):
+    f = Future()
+
+    def _expired():
+        if not f.done():
+            f.set_exception(TimeoutError())
+
+    def _done(task):
+        res = task.result()
+        if not f.done():
+            f.set_result(res)
+
+    future_task = Task(func, *args, **kwargs)
+    future_task.add_done_callback(_done)
+    if deadline:
+        IOLoop.current().add_timeout(deadline, _expired)
+    return f
