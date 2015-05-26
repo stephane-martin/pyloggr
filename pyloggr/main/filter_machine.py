@@ -1,10 +1,16 @@
 # encoding: utf-8
+
+"""
+The Filter Machine process can be used to apply series of filters to events
+"""
 __author__ = 'stef'
 
 import logging
+from datetime import timedelta
 
-from tornado.gen import coroutine
+from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import IOLoop
+# noinspection PyCompatibility
 from concurrent.futures import ThreadPoolExecutor
 
 from ..rabbitmq import RabbitMQConnectionError
@@ -17,28 +23,26 @@ from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
 
-# todo: choose final storage for events in filter configuration
 
-
-class EventParser(object):
+class FilterMachine(object):
     """
     Implements an Event parser than retrieves events from RabbitMQ, apply filters, and pushes
     back events to RabbitMQ.
     """
 
-    def __init__(self, from_rabbitmq_config, to_rabbitmq_config):
+    def __init__(self, consumer_config, publisher_config, filters_filename):
         """
-        :type from_rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
-        :type to_rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        :type consumer_config: pyloggr.rabbitmq.Configuration
+        :type publisher_config: pyloggr.rabbitmq.Configuration
         """
-        self.from_rabbitmq_config = from_rabbitmq_config
-        self.to_rabbitmq_config = to_rabbitmq_config
+        self.consumer_config = consumer_config
+        self.publisher_config = publisher_config
         self.consumer = None
         self.publisher = None
         self.shutting_down = None
-        self.executor = ThreadPoolExecutor(max_workers=self.from_rabbitmq_config.qos + 5)
-        self.filters = Filters(Config.CONFIG_DIR)
-        self.filters.open()
+        self.executor = ThreadPoolExecutor(max_workers=self.consumer_config.qos + 5)
+        self.filters = None
+        self.filters_filename = filters_filename
 
     @coroutine
     def launch(self):
@@ -49,12 +53,13 @@ class EventParser(object):
         ====
         Coroutine
         """
-
-        self.publisher = Publisher(self.to_rabbitmq_config)
+        self.filters = Filters(Config.CONFIG_DIR, self.filters_filename)
+        self.filters.open()
+        self.publisher = Publisher(self.publisher_config)
         try:
             closed_publisher_event = yield self.publisher.start()
         except RabbitMQConnectionError:
-            logger.warning("Can't connect to publisher")
+            logger.warning("Filter machine: Can't connect to publisher")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(Config.SLEEP_TIME))
             yield self.stop()
             yield sleep(60)
@@ -71,28 +76,32 @@ class EventParser(object):
 
     @coroutine
     def _start_consumer(self):
-        self.consumer = Consumer(self.from_rabbitmq_config)
+        self.consumer = Consumer(self.consumer_config)
         try:
-            closed_connection_event = yield self.consumer.start(self.from_rabbitmq_config.qos)
-        except RabbitMQConnectionError:
+            closed_consumer_event = yield self.consumer.start()
+        except (RabbitMQConnectionError, TimeoutError):
             logger.warning("Can't connect to consumer")
             logger.info("We will try to reconnect to RabbitMQ in {} seconds".format(Config.SLEEP_TIME))
             # self.stop() stops the publisher too. so closed_publisher_event.wait() inside launch will return
             yield self.stop()
             return
         else:
-            yield self._consume()           # only returns if we lose rabbitmq connection
+            IOLoop.instance().add_callback(self._consume)
+            yield closed_consumer_event.wait()
+            yield self.stop()
 
     @coroutine
     def _consume(self):
-        # this coroutine never returns (as long the rabbitmq connection lives)
+        # this coroutine doesn't return, as long the rabbitmq connection lives
         message_queue = self.consumer.start_consuming()
-        while True:
-            if (not self.consumer) or self.shutting_down:
-                break
-            message = yield message_queue.get()
-            future = self.executor.submit(self._apply_filters, message)
-            IOLoop.instance().add_future(future, self._publish)
+        while self.consumer.consuming and not self.shutting_down:
+            try:
+                message = yield message_queue.get_wait(deadline=timedelta(seconds=1))
+            except TimeoutError:
+                pass
+            else:
+                future = self.executor.submit(self._apply_filters, message)
+                IOLoop.instance().add_future(future, self._publish)
 
     @coroutine
     def _publish(self, future):
@@ -101,9 +110,37 @@ class EventParser(object):
             # dropped event
             message.ack()
             return
-        res, _ = yield self.publisher.publish_event(ev)
-        if res:
-            message.ack()
+        if self.publisher:
+
+            # here we take into account the optional overrides of the router engine
+            event_type = ev.override_event_type if ev.override_event_type else ''
+            if ev.override_exchanges:
+                # publish to many exchanges
+                futures = [
+                    self.publisher.publish_event(
+                        ev, routing_key='pyloggr.machine', event_type=event_type, exchange=exchange
+                    )
+                    for exchange in ev.override_exchanges
+                ]
+                results = yield futures
+                results = [res for res, _ in results]
+                if any(results):
+                    # if at least one publish succeeds, we ack the message
+                    message.ack()
+                    if not all(results):
+                        logger.warning("Publication of event '{}' failed for at least one exchange".format(ev.uuid))
+                else:
+                    logger.warning("Publication of event '{}' failed for all exchanges".format(ev.uuid))
+                    message.nack()
+
+            else:
+                # publish only to the default exchange, from machine configuration
+                res, _ = yield self.publisher.publish_event(ev, routing_key='pyloggr.machine', event_type=event_type)
+                if res:
+                    message.ack()
+                else:
+                    logger.warning("Publication of event '{}' failed".format(ev.uuid))
+                    message.nack()
         else:
             message.nack()
 
@@ -112,12 +149,14 @@ class EventParser(object):
         """
         Stops the parser
         """
+        futures = []
         if self.consumer:
-            yield self.consumer.stop()
-            self.consumer = None
+            futures.append(self.consumer.stop())
         if self.publisher:
-            yield self.publisher.stop()
-            self.publisher = None
+            futures.append(self.publisher.stop())
+        yield futures
+        self.consumer = None
+        self.publisher = None
 
     @coroutine
     def shutdown(self):
