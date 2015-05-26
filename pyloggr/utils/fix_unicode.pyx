@@ -1,5 +1,15 @@
 # encoding: utf-8
 
+from cpython cimport bool
+from cpython.unicode cimport PyUnicode_Check, PyUnicode_Translate, PyUnicode_AsUTF8String, PyUnicode_Format
+from cpython.unicode cimport PyUnicode_Replace
+
+from cpython.bytes cimport PyBytes_Size, PyBytes_Check
+from cpython.string cimport PyString_AsDecodedObject
+from cpython.int cimport PyInt_Check
+from cpython.float cimport PyFloat_Check
+from cpython.set cimport PySet_New, PySet_Contains
+
 import unicodedata
 import re
 
@@ -16,7 +26,7 @@ LIGATURES = {
     ord(u'ﬂ'): u'fl',
     ord(u'ﬃ'): u'ffi',
     ord(u'ﬄ'): u'ffl',
-    ord(u'ﬅ'): u'ſt',
+    ord(u'ﬅ'): u'ft',
     ord(u'ﬆ'): u'st'
 }
 
@@ -41,29 +51,38 @@ cdef unicode guess_bytes(bytes bstring):
     :return: unicode string
     """
     cdef int l
-    l = len(bstring)
+    l = PyBytes_Size(bstring)
     if l == 0:
         return u''
     if bstring[0] == b'\xfe':
         if l == 1:
             return u'þ'
         elif bstring[1] == b'\xff':
-            return bstring.decode('utf-16')
+            try:
+                return PyString_AsDecodedObject(bstring, 'utf-16', 'strict')
+            except UnicodeDecodeError:
+                pass
     if bstring[0] == b'\xff':
         if l == 1:
             return u'ÿ'
         elif bstring[1] == b'\xfe':
-            return bstring.decode('utf-16')
+            try:
+                return PyString_AsDecodedObject(bstring, 'utf-16', 'strict')
+            except UnicodeDecodeError:
+                pass
     try:
-        return bstring.decode('utf-8')
+        return PyString_AsDecodedObject(bstring, 'utf-8', 'strict')
     except UnicodeDecodeError:
         pass
 
-    chars = set(bstring)
-    if byte_cr in chars and byte_lf not in chars:
-        return bstring.decode('macroman')
+
+    chars = PySet_New(bstring)
+    if PySet_Contains(chars, byte_cr) and not PySet_Contains(chars, byte_lf):
+        return PyString_AsDecodedObject(bstring, 'macroman', 'strict')
+        #return bstring.decode('macroman')
     else:
-        return bstring.decode('windows-1252', 'replace')
+        #return bstring.decode('windows-1252', 'replace')
+        return PyString_AsDecodedObject(bstring, 'windows-1252', 'strict')
 
 
 cdef unicode common_fixes(unicode s):
@@ -77,12 +96,42 @@ cdef unicode common_fixes(unicode s):
     t = s.translate(LIGATURES)
     t = t.translate(CONTROL_CHARS)
     t = ANSI_RE.sub(u'', t)
-    t = t.replace(u'\r\n', u'\n').replace(u'\r', u'\n').replace('\u2028', u'\n').replace('\u2029', u'\n').replace('\u0085', u'\n')
+    # PyUnicode_Replace(object str, object substr, object replstr, Py_ssize_t maxcount)
+    t = PyUnicode_Replace(
+        PyUnicode_Replace(
+            PyUnicode_Replace(
+                PyUnicode_Replace(
+                    PyUnicode_Replace(
+                        t, u'\r\n', u'\n', -1
+                    ),
+                    u'\r', u'\n', -1
+                ),
+                '\u2028', u'\n', -1
+            ),
+            '\u2029', u'\n', -1
+        ),
+        '\u0085', u'\n', -1
+    )
     t = SINGLE_QUOTE_RE.sub(u"'", DOUBLE_QUOTE_RE.sub(u'"', t))
     return unicodedata.normalize('NFC', t)
 
+# todo: HTML strip
 
-cpdef unicode to_unicode(s, bint fixes=False):
+cpdef bytes to_bytes(object s):
+    """
+    Convert object to a bytes string
+
+    :param s: object
+    :return: bytes
+    """
+    if PyUnicode_Check(s):
+        return PyUnicode_AsUTF8String(<unicode>s)
+    if PyBytes_Check(s):
+        return <bytes>s
+    # todo: better default
+    return PyUnicode_AsUTF8String(to_unicode(s))
+
+cpdef unicode to_unicode(object s, bool fixes=False):
     """
     Convert to unicode
 
@@ -90,18 +139,15 @@ cpdef unicode to_unicode(s, bint fixes=False):
     :param fixes: should we apply common unicode fixes, such as NFC normalization
     :return: unicode string
     """
-    if type(s) is unicode:
+    if PyUnicode_Check(s):
         if fixes:
             return common_fixes(<unicode>s)
         return <unicode>s
     if isinstance(s, bytes):
+        # always apply common fixes when the source is bytes
         return common_fixes(guess_bytes(<bytes>s))
-    if type(s) is int or type(s) is float:
+    if PyInt_Check(s) or PyFloat_Check(s):
         return u'{}'.format(s)
-    if isinstance(s, unicode):
-        if fixes:
-            return common_fixes(<unicode>s)
-        return <unicode>s
     if s is None:
         return u''
-    return to_unicode(str(s))
+    return PyString_AsDecodedObject(str(s), 'utf-8', 'strict')
