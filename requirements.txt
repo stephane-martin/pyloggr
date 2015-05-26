@@ -7,7 +7,6 @@ futures>=2.2
 geoip2>=2.0
 Jinja2>=2.7
 jsonschema>=2.4.0
-marshmallow>=1.2.2
 pika>=0.9
 setuptools
 setuptools_git
@@ -45,4 +44,4 @@ argh
 cytoolz
 unidecode
 msgpack-python
-
+elasticsearch
