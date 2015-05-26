@@ -11,15 +11,22 @@ __author__ = 'stef'
 from io import open
 import os
 import sys
-from os.path import exists, expanduser, join
+from os.path import exists, expanduser, join, isfile
 from signal import SIGTERM
+import socket
 
 import psutil
+# noinspection PyCompatibility
+import psycopg2
+# noinspection PyCompatibility
+from concurrent.futures import ProcessPoolExecutor
 from future.builtins import str as text
 from tornado.ioloop import IOLoop
-from tornado.gen import coroutine
+from tornado.gen import coroutine, TimeoutError
 from argh.helpers import ArghParser
 from argh.exceptions import CommandError
+
+
 from pyloggr.utils import ask_question
 from pyloggr.config import Config, set_configuration, set_logging
 
@@ -45,7 +52,7 @@ def set_config_env(config_dir):
     set_configuration(config_env)
 
 
-def check_pid(name):
+def _check_pid(name):
     if not exists(Config.PIDS_DIRECTORY):
         try:
             os.makedirs(Config.PIDS_DIRECTORY)
@@ -72,8 +79,8 @@ def check_pid(name):
 
 
 def _run(process):
-    from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, ParserProcess, PgSQLShipperProcess
-    from pyloggr.scripts.processes import HarvestProcess
+    from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, FilterMachineProcess, PgSQLShipperProcess
+    from pyloggr.scripts.processes import HarvestProcess, CollectorProcess, FSShipperProcess, SyslogShipperProcess
     from pyloggr.utils import remove_pid_file
     pid_file = join(Config.PIDS_DIRECTORY, process + u".pid")
     try:
@@ -89,13 +96,16 @@ def _run(process):
         dispatcher = {
             'frontend': FrontendProcess,
             'syslog': SyslogProcess,
-            'pgsql_shipper': PgSQLShipperProcess,
-            'parser': ParserProcess,
-            'harvest': HarvestProcess
+            'shipper2pgsql': PgSQLShipperProcess,
+            'filtermachine': FilterMachineProcess,
+            'harvest': HarvestProcess,
+            'collector': CollectorProcess,
+            'shipper2fs': FSShipperProcess,
+            'shipper2syslog': SyslogShipperProcess
         }
         process_class = dispatcher[process]
         try:
-            process_obj = process_class(process)
+            process_obj = process_class()
         except RuntimeError as ex:
             raise CommandError("Process '{}' initialization error: {}".format(process, str(ex)))
         else:
@@ -108,14 +118,14 @@ def run(process, config_dir=None):
     """
     Starts a pyloggr process in foreground.
 
-    :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser
+    :param process: name of process
     :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
     if process not in pyloggr_process:
         raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
 
-    if check_pid(process) is not None:
+    if _check_pid(process) is not None:
         raise CommandError("'{}' is already running".format(process))
 
     _run(process)
@@ -129,7 +139,7 @@ def run_daemon(process, config_dir=None):
     ====
     This is not recommended. You should use supervisord and the `run` command.
 
-    :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser'
+    :param process: name of process
     :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
@@ -137,7 +147,6 @@ def run_daemon(process, config_dir=None):
         raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
 
     import daemon
-    from os.path import expanduser
     context = daemon.DaemonContext()
     context.umask = 0o022
     context.working_directory = expanduser('~')
@@ -145,7 +154,7 @@ def run_daemon(process, config_dir=None):
     context.files_preserve = None
     context.detach_process = True
 
-    if check_pid(process) is not None:
+    if _check_pid(process) is not None:
         raise CommandError("'{}' is already running".format(process))
 
     with context:
@@ -157,13 +166,14 @@ def stop(process, config_dir=None):
     """
     Stops a pyloggr process
 
-    :param process: 'frontend', 'syslog', 'pgsql_shipper', 'parser'
+    :param process: name of process
+    :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
     if process not in pyloggr_process:
         raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
 
-    p = check_pid(process)
+    p = _check_pid(process)
     if p is None:
         raise CommandError("'{}' is not running".format(process))
     p.send_signal(SIGTERM)
@@ -180,7 +190,7 @@ def run_all(config_dir=None):
     :param config_dir: optionnal configuration directory
     """
     set_config_env(config_dir)
-    from concurrent.futures import ProcessPoolExecutor
+
     # execute all the pyloggr process in children subprocess
     with ProcessPoolExecutor(max_workers=len(pyloggr_process)) as executor:
         list(executor.map(_run, pyloggr_process))
@@ -215,12 +225,13 @@ def init_db(config_dir=None):
     """
     Creates the needed tables and indices in PGSQL
 
+    :param config_dir: optional configuration directory
+
     Note
     ====
     The PostgreSQL user and database should have been manually created by the admin before
     """
     set_config_env(config_dir)
-    import psycopg2
     try:
         psycopg2.connect(Config.POSTGRESQL.DSN)
     except psycopg2.Error:
@@ -257,12 +268,14 @@ def init_db(config_dir=None):
 def purge_db(config_dir=None):
     """
     Purge the content of pyloggr's PGSQL db (not deleting the table).
+
+    :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
     answer = ask_question("Are you sure you want to empty the PGSQL db ? (y/N)")
     if not answer:
         return
-    import psycopg2
+
     with psycopg2.connect(Config.POSTGRESQL.DSN) as conn:
         with conn.cursor() as cur:
             try:
@@ -276,6 +289,8 @@ def purge_db(config_dir=None):
 def purge_queues(config_dir=None):
     """
     Purge the content of Pyloggr's RabbitMQ queues (no delete)
+
+    :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
     answer = ask_question("Are you sure you want to empty the RabbitMQ queues ? (y/N)")
@@ -284,13 +299,13 @@ def purge_queues(config_dir=None):
     from pyloggr.rabbitmq.management import Client
 
     @coroutine
-    def purge():
+    def _purge():
         client = Client(Config.NOTIFICATIONS.host, Config.NOTIFICATIONS.user, Config.NOTIFICATIONS.password)
         yield client.purge_queue(Config.NOTIFICATIONS.vhost, Config.PARSER_CONSUMER.queue)
         yield client.purge_queue(Config.NOTIFICATIONS.vhost, Config.PGSQL_CONSUMER.queue)
 
     try:
-        IOLoop.instance().run_sync(purge)
+        IOLoop.instance().run_sync(_purge)
     except Exception as ex:
         print("Purge of RabbitMQ queues failed:", str(ex), file=sys.stderr)
     else:
@@ -301,6 +316,8 @@ def init_rabbitmq(config_dir=None):
     """
     Creates the exchanges and queues needed for pyloggr in RabbitMQ.
 
+    :param config_dir: optional configuration directory
+
     Note
     ====
     If an exchange or queue already exists, we silently pass
@@ -309,7 +326,7 @@ def init_rabbitmq(config_dir=None):
     from pyloggr.rabbitmq.management import Client, HTTPError
 
     @coroutine
-    def init_rabbit():
+    def _init_rabbit():
         client = Client(Config.NOTIFICATIONS.host, Config.NOTIFICATIONS.user, Config.NOTIFICATIONS.password)
         create_parser_queue = False
         create_pgsql_queue = False
@@ -461,14 +478,19 @@ def init_rabbitmq(config_dir=None):
                     Config.PARSER_PUBLISHER.exchange, Config.PGSQL_CONSUMER.queue
                 ))
 
-    IOLoop.instance().run_sync(init_rabbit)
+    IOLoop.instance().run_sync(_init_rabbit)
 
 
 def status(config_dir=None):
+    """
+    Display status of pyloggr processes
+
+    :param config_dir: optional configuration directory
+    """
     set_config_env(config_dir)
     print()
     for p_name in pyloggr_process:
-        if check_pid(p_name):
+        if _check_pid(p_name):
             print(p_name + " is running")
         else:
             print(p_name + " is not running")
@@ -484,22 +506,153 @@ def status(config_dir=None):
         print("Can't connect to RabbitMQ: " + str(ex))
     else:
         print("Connected to RabbitMQ")
-    from psycopg2 import connect, DatabaseError
     try:
-        connect(Config.POSTGRESQL.DSN).cursor().execute("SELECT 1;")
-    except DatabaseError as ex:
+        psycopg2.connect(Config.POSTGRESQL.DSN).cursor().execute("SELECT 1;")
+    except psycopg2.DatabaseError as ex:
         print("Can't connect to PGSQL: {}".format(str(ex)))
     else:
         print("Connected to PGSQL")
 
-pyloggr_process = ['frontend', 'syslog', 'pgsql_shipper', 'parser', 'harvest']
+
+def syslog_client(server, port, source=None, message=None, filename=None, severity='notice', facility='user',
+                  app_name='pyloggr', usessl=False, verify=False, hostname='', cacerts=None):
+    """
+    Send a message to a syslog server, using TCP (rfc5424).
+
+    Either `message` or `filename` should be given. If `message` is not None, the string is sent as a log message.
+    If `filename` is not None, the file is read, and each line is sent as a log message.
+
+    :param server: server hostname or IP
+    :param port: server port
+    :param source: log source host (if None, gethostname will be used)
+    :param message: log message
+    :param filename: if not None, each line of filename will be sent as a log message
+    :param severity: log severity ('notice' by default)
+    :param facility: log facility ('user' by default)
+    :param app_name: log source application name ('pyloggr' by default)
+    :type server: str
+    :type port: int
+    :type source: str
+    :type message: str
+    :type filename: str
+    :type severity: str
+    :type facility: str
+    :type app_name: str
+    :type usessl: bool
+    """
+    from pyloggr.syslog.tcp_syslog_client import SyslogClient
+
+    if message is None and filename is None:
+        raise CommandError("Either message or filename should be given")
+    if message is not None and filename is not None:
+        raise CommandError("Only fill message OR filename")
+    try:
+        port = int(port)
+    except ValueError:
+        raise CommandError("port must be an integer")
+
+    if source is None:
+        source = socket.gethostname()
+
+    @coroutine
+    def _run_client():
+        client = SyslogClient(server, port, use_ssl=usessl, hostname=hostname, verify_cert=verify,
+                              ca_certs=cacerts)
+        try:
+            closed_connection_ev = yield client.start()
+        except (socket.error, TimeoutError) as ex:
+            print("Connection error: " + str(ex))
+            return
+        try:
+            if filename:
+                if not exists(filename) or not isfile(filename):
+                    raise CommandError("'{}' is not a file".format(filename))
+                res = yield client.send_file(filename, source, severity, facility, app_name)
+            else:
+                res = yield client.send_message(message, source, severity, facility, app_name)
+            print("Server said '{}'".format("OK" if res else "KO"))
+        finally:
+            yield client.stop()
+
+    IOLoop.instance().run_sync(_run_client)
 
 
-def main():
+def relp_client(server, port, source=None, message=None, filename=None, severity='notice', facility='user',
+                app_name='pyloggr', usessl=False, verify=False, hostname='', cacerts=None):
+    """
+    Send a message to a RELP server
+
+    Either `message` or `filename` should be given. If `message` is not None, the string is sent as a log message.
+    If `filename` is not None, the file is read, and each line is sent as a log message.
+
+    :param server: server hostname or IP
+    :param port: server port
+    :param source: log source host (if None, gethostname will be used)
+    :param message: log message
+    :param filename: if not None, each line of filename will be sent as a log message
+    :param severity: log severity ('notice' by default)
+    :param facility: log facility ('user' by default)
+    :param app_name: log source application name ('pyloggr' by default)
+    :type server: str
+    :type port: int
+    :type source: str
+    :type message: str
+    :type filename: str
+    :type severity: str
+    :type facility: str
+    :type app_name: str
+    :type usessl: bool
+    """
+    from pyloggr.syslog.relp_client import RELPClient, ServerClose
+    if message is None and filename is None:
+        raise CommandError("either message or filename should be given")
+    if message is not None and filename is not None:
+        raise CommandError("Only fill message OR filename")
+    try:
+        port = int(port)
+    except ValueError:
+        raise CommandError("port must be an integer")
+
+    if source is None:
+        source = socket.gethostname()
+
+    @coroutine
+    def _send(sendfile):
+        relp_clt = RELPClient(server, port, use_ssl=usessl, hostname=hostname, verify_cert=verify,
+                              ca_certs=cacerts)
+        try:
+            yield relp_clt.start()
+        except (socket.error, TimeoutError, ServerClose) as ex:
+            print("Connection error: " + str(ex))
+            return
+        if sendfile:
+            resp, acks = yield relp_clt.send_file(filename, source, severity, facility, app_name)
+            positives = sum(acks.values())
+            print("No error occured" if resp else "Error occured while sending events")
+            print("{} events were sent".format(len(acks)))
+            print("{} events were ACKed".format(positives))
+        else:
+            resp = yield relp_clt.send_message(message, source, severity, facility, app_name)
+            print("RELP server ACK the message" if resp else "RELP server NACK the message")
+        yield relp_clt.stop()
+
+    if filename:
+        if not exists(filename) or not isfile(filename):
+            raise CommandError("'{}' is not a file".format(filename))
+        IOLoop.instance().run_sync(_send(True))
+    else:
+        IOLoop.instance().run_sync(_send(False))
+
+
+pyloggr_process = ['frontend', 'syslog', 'shipper2pgsql', 'shipper2fs', 'filtermachine', 'harvest', 'collector',
+                   'shipper2syslog']
+
+
+def _main():
     p = ArghParser()
     p.add_commands([
         run, run_all, run_daemon, run_daemon_all, stop, stop_all, status, init_db, init_rabbitmq, purge_db,
-        purge_queues
+        purge_queues, syslog_client, relp_client
     ])
     try:
         p.dispatch()
@@ -509,4 +662,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    _main()
