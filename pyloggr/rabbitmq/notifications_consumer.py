@@ -3,8 +3,9 @@ __author__ = 'stef'
 
 import logging
 import ujson
+from datetime import timedelta
 
-from tornado.gen import coroutine
+from tornado.gen import coroutine, TimeoutError
 
 from .consumer import Consumer
 from ..utils.observable import Observable
@@ -15,28 +16,35 @@ logger = logging.getLogger(__name__)
 class NotificationsConsumer(Consumer, Observable):
     """
     Consumes notification that were posted in RabbitMQ
+
+    Parameters
+    ==========
+    rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        RabbitMQ connection parameters (to consume notifications from RabbitMQ)
+    binding_key: str
+        Binding key to filter notifications
     """
-    def __init__(self, rabbitmq_config, binding_key):
+    def __init__(self, rabbitmq_config):
         """
         :type rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
         """
-        Consumer.__init__(self, rabbitmq_config, binding_key)
+        Consumer.__init__(self, rabbitmq_config)
         Observable.__init__(self)
 
     @coroutine
     def start_consuming(self):
         """
         Start consuming notifications from RabbitMQ and notify observers.
-
-        Note
-        ====
-        This coroutine never terminates
         """
         message_queue = Consumer.start_consuming(self)
-        while True:
-            message = yield message_queue.get()
+        while self.consuming:
             try:
-                self.notify_observers(ujson.loads(message.body))
-            except Exception:
-                logger.exception("Swallowed exception")
+                message = yield message_queue.get_wait(deadline=timedelta(seconds=1))
+            except TimeoutError:
+                pass
+            else:
+                try:
+                    self.notify_observers(ujson.loads(message.body))
+                except Exception:
+                    logger.exception("Swallowed exception")
 

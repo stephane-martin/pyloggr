@@ -1,5 +1,4 @@
 # encoding: utf-8
-
 """
 Pure python client to RabbitMQ management API
 forked from https://github.com/bkjones/pyrabbit
@@ -22,12 +21,11 @@ contributors may be used to endorse or promote products derived from this
 software without specific prior written permission
 """
 
-import logging
-
 from future import standard_library
-
 standard_library.install_aliases()
-# noinspection PyUnresolvedReferences
+
+import logging
+# noinspection PyUnresolvedReferences,PyCompatibility
 from urllib.parse import urljoin, quote
 from requests_futures.sessions import FuturesSession
 from requests.exceptions import ConnectionError, Timeout, RequestException
@@ -70,23 +68,24 @@ class NetworkError(Exception):
 
 
 class HTTPClient(object):
+    """
+    Utility class to encapsulate HTTP calls
+
+    Parameters
+    ==========
+    server : str
+        `host:port` string denoting the location of the broker and the port for interfacing with its REST API
+    uname : str
+        Username credential used to authenticate
+    passwd : str
+        Password used to authenticate with RabbitMQ API
+    timeout : int
+        number of seconds to wait for each call
+    threads : int
+        how many background threads to use for HTTP calls
+    """
+
     def __init__(self, server, uname, passwd, timeout=10, threads=5, https=False):
-        """
-        Constructor
-
-        :param server: `host:port` string denoting the location of the broker and the port for interfacing
-        with its REST API.
-        :type server: str
-        :param uname: Username credential used to authenticate.
-        :type uname: str
-        :param passwd: Password used to authenticate with RabbitMQ API
-        :type passwd: str
-        :param timeout: number of seconds to wait for each call
-        :type timeout: int
-        :param threads: how many background threads to use
-        :type threads: int
-        """
-
         self.base_url = 'https://{}/api/'.format(server) if https else 'http://{}/api/'.format(server)
         self.client = FuturesSession(max_workers=threads)
         self.client.auth = (uname, passwd)
@@ -763,6 +762,9 @@ class Client(object):
         {"source":"sourceExch","vhost":"/","destination":"testq",
          "destination_type":"queue","routing_key":"*.*","arguments":{},
          "properties_key":"%2A.%2A"}
+
+        :param vhost: RabbitMQ virtual host
+        :param qname: queue name
         """
         vhost = quote(vhost, '')
         qname = quote(qname, '')

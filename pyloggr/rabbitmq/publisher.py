@@ -1,17 +1,18 @@
 # encoding: utf-8
 
 """
-The publisher module provides the `Publisher` class.
+The publisher module provides the `Publisher` class to publish messages to RabbitMQ
 """
 
 __author__ = 'stef'
 
 import logging
+from datetime import timedelta
 
 import pika
 from pika.adapters.tornado_connection import TornadoConnection
 from tornado.ioloop import IOLoop
-from tornado.gen import coroutine, Task, Return
+from tornado.gen import coroutine, Task, Return, with_timeout, TimeoutError
 from tornado.concurrent import Future, chain_future
 from toro import Event
 
@@ -22,7 +23,14 @@ logger = logging.getLogger(__name__)
 
 class Publisher(object):
     """
-    Publish messages in RabbitMQ
+    Publisher encapsulates the logic for async publishing to RabbitMQ
+
+    Parameters
+    ==========
+    rabbitmq_config: pyloggr.config.RabbitMQBaseConfig
+        RabbitMQ connection parameters
+    base_routing_key: str
+        This routing key will be used if no routing_key is provided to publish methods
     """
 
     def __init__(self, rabbitmq_config, base_routing_key=u''):
@@ -40,6 +48,7 @@ class Publisher(object):
         self.rabbitmq_config = rabbitmq_config
         self.connection = None
         self.channel = None
+        self.closing = False
         self.connection_has_been_closed_event = None
         self.base_routing_key = base_routing_key
 
@@ -59,88 +68,117 @@ class Publisher(object):
     @coroutine
     def start(self):
         """
-        Starts the publisher
+        start()
+        Starts the publisher.
+
+        start() raises RabbitMQConnectionError if no connection can be established.
+        If connection succeeds, it returns a toro.Event object that will resolve when connection will be lost
 
         Note
         ====
         Coroutine
         """
         logger.info("Connecting to RabbitMQ publisher")
+        self._reset_counters()
         error_connect_future = Future()
         connect_future = Future()
+        self.closing = False
 
-        def on_connect_error(conn, errormsg=None):
+        def _on_connect_error(conn, errormsg=None):
             error_connect_future.set_result((False, conn, errormsg))
 
-        def on_connect_open(conn):
+        def _on_connect_open(conn):
             connect_future.set_result((True, conn, None))
 
         self.connection_has_been_closed_event = Event()
 
         # noinspection PyUnusedLocal
-        def on_connection_close(conn, reply_code, reply_text):
-            logger.info("Connection to RabbitMQ publisher has been closed")
+        def _on_connection_close(conn, reply_code, reply_text):
+            logger.info("Connection to RabbitMQ publisher has been closed!")
+            current_tags = self.futures_ack.keys()
+            for tag in current_tags:
+                if not self.futures_ack[tag].done():
+                    self.futures_ack[tag].set_result(False)
             self.connection = None
             self.channel = None
             # notify who is using the publisher
             self.connection_has_been_closed_event.set()
+            self.closing = False
 
         # noinspection PyUnusedLocal
-        def on_channel_close(chan, reply_code, reply_text):
-            logger.info("Channel to RabbitMQ publisher has been closed")
-            self._reset_counters()
+        def _on_channel_close(chan, reply_code, reply_text):
+            logger.info("Channel to RabbitMQ publisher has been closed!")
+            current_tags = self.futures_ack.keys()
+            for tag in current_tags:
+                if not self.futures_ack[tag].done():
+                    self.futures_ack[tag].set_result(False)
             self.channel = None
+            self.closing = True
+            self.connection.close()
 
         self.connection = TornadoConnection(
             self._parameters,
-            on_open_callback=on_connect_open,
-            on_open_error_callback=on_connect_error,
+            on_open_callback=_on_connect_open,
+            on_open_error_callback=_on_connect_error,
             on_close_callback=None,
             custom_ioloop=IOLoop.current(),
             stop_ioloop_on_close=False,
         )
 
         chain_future(error_connect_future, connect_future)
-        (res, connection, error_msg) = yield connect_future
-        if not res:
-            raise RabbitMQConnectionError(error_msg)
-        logger.info("Connection to RabbitMQ publisher has been opened")
-        if connection is not None:
-            connection.add_on_close_callback(on_connection_close)
-        channel = yield Task(self._open_channel)
-        logger.info("Channel to RabbitMQ publisher has been opened")
-        self._reset_counters()
-        self.channel = channel
-        self.channel.confirm_delivery(self._on_delivery_confirmation)
-        self.channel.add_on_close_callback(on_channel_close)
-        # give an Event object to client, so that it can detect when connection has been closed
-        raise Return(self.connection_has_been_closed_event)
+        try:
+            (res, connection, error_msg) = yield with_timeout(timedelta(seconds=10), connect_future)
+        except TimeoutError:
+            logger.error("publisher: connect to rabbitmq timeout")
+            raise
+        else:
+            if not res:
+                raise RabbitMQConnectionError(error_msg)
+            logger.info("Connection to RabbitMQ publisher has been opened")
+            if connection is not None:
+                connection.add_on_close_callback(_on_connection_close)
+            channel = yield Task(self._open_channel)
+            logger.info("Channel to RabbitMQ publisher has been opened")
+            self._reset_counters()
+            self.channel = channel
+            self.channel.confirm_delivery(self._on_delivery_confirmation)
+            self.channel.add_on_close_callback(_on_channel_close)
+            # give an Event object to client, so that it can detect when connection has been closed
+            raise Return(self.connection_has_been_closed_event)
 
+    # noinspection PyDocstring
     @coroutine
     def publish(self, exchange, body, routing_key=u'', message_id=None, headers=None,
-                content_type="application/json", content_encoding="utf-8", persistent=True):
+                content_type="application/json", content_encoding="utf-8", persistent=True,
+                application_id=u'', event_type=u''):
 
         """
-        publish(exchange, body, routing_key='', message_id=None, headers=None, content_type="application/json", content_encoding="utf-8", persistent=True)
+        publish(exchange, body, routing_key='', message_id=None, headers=None, content_type="application/json", content_encoding="utf-8", persistent=True, application_id=None, event_type=None)
         Publish a message to RabbitMQ
 
-        :param exchange: publish to this exchange
-        :type exchange: str
-        :param body: message body
-        :type body: str
-        :param routing_key: optional routing key
-        :type routing_key: str
-        :param message_id: optional ID for the message
-        :type message_id: str
-        :param headers: optional headers
-        :type headers: dict
-        :param content_type: message content type
-        :type content_type: str
-        :param content_encoding: message charset
-        :type content_encoding: str
-        :param persistent: if True, message will be persisted in RabbitMQ
-        :type persistent: bool
-        :return: True if publication was acknowledged by RabbitMQ, False otherwise
+        Parameters
+        ==========
+        exchange: str
+            publish to this exchange
+        body: str
+            message body
+        routing_key: str
+            optional routing key
+        message_id: str
+            optional ID for the message
+        headers: dict
+            optional message headers
+        content_type: str
+            message content type
+        content_encoding: str
+            message charset
+        persistent: bool
+            if True, message will be persisted in RabbitMQ
+        application_id: str
+            optional application ID
+        event_type: str
+            optional message type
+
         :rtype: bool
 
         Note
@@ -167,12 +205,14 @@ class Publisher(object):
             raise Return(False)
 
         mode = 2 if persistent else 1
+        application_id = application_id if application_id else self.rabbitmq_config.application_id
+        event_type = event_type if event_type else self.rabbitmq_config.event_type
 
         publish_properties = pika.BasicProperties(
             content_type=content_type,
             content_encoding=content_encoding,
-            app_id=self.rabbitmq_config.application_id,
-            type=self.rabbitmq_config.event_type,
+            app_id=application_id,
+            type=event_type,
             delivery_mode=mode,
             message_id=message_id,
             headers=headers
@@ -191,26 +231,39 @@ class Publisher(object):
         raise Return(res)
 
     @coroutine
-    def publish_event(self, event, routing_key=''):
+    def publish_event(self, event, routing_key=u'', exchange=u'', application_id=u'', event_type=u''):
         """
-        publish_event(exchange, event, routing_key='', persistent=True)
-        Publish an Event object in RabbitMQ
+        publish_event(event, routing_key=u'', exchange=u'', application_id=u'', event_type=u'')
+        Publish an Event object in RabbitMQ. Always persistent.
 
         :param event: Event object
         :type event: pyloggr.event.Event
+        :param routing_key: RabbitMQ routing key
+        :type routing_key: str or unicode
+        :param exchange: optional exchange (override global config)
+        :type exchange: str or unicode
+        :param application_id: optional application ID (override global config)
+        :type application_id: str or unicode
+        :param event_type: optional event type (override global config)
+        :type event_type: str or unicode
 
         Note
         ====
         Tornado coroutine
         """
-        json_event = event.dumps()
+        json_event = event.dump_json()
+        if not routing_key:
+            routing_key = self.base_routing_key
         # publish the event in RabbitMQ in JSON format
+        exchange = str(exchange) if exchange else self.rabbitmq_config.exchange
         result = yield self.publish(
-            exchange=self.rabbitmq_config.exchange,
+            exchange=exchange,
             body=json_event,
             routing_key=routing_key,
             message_id=event.uuid,
-            persistent=True
+            persistent=True,
+            application_id=application_id,
+            event_type=event_type
         )
         raise Return((result, event))
 
@@ -240,15 +293,18 @@ class Publisher(object):
     @coroutine
     def stop(self):
         """
+        stop()
         Stops the publisher
 
         Note
         ====
         Tornado coroutine
         """
-        if self.connection is None:
-            return
-        if self.connection.is_closed or self.connection.is_closing:
-            return
-        self.connection.close()
+        if not self.closing:
+            self.closing = True
+            if self.connection is None:
+                return
+            if self.connection.is_closed or self.connection.is_closing:
+                return
+            self.connection.close()
         yield self.connection_has_been_closed_event.wait()
