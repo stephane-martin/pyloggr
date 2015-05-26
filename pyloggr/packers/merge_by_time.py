@@ -21,6 +21,15 @@ class PackerByTime(BasePacker):
     """
     A time based packer merges several events if they came from the same source and were sent roughly at the same
     time.
+
+    Parameters
+    ==========
+    publisher: BasePacker or pyloggr.rabbitmq.publisher.Publisher
+        Publisher where to send merge events
+    merge_event_window: int
+        Events sent in the merge_event_window interval, in milliseconds, will be merged
+    queue_max_age: int
+        Queues older that queue_max_age, in milliseconds, will be published
     """
 
     def __init__(self, publisher, merge_event_window=250, queue_max_age=5000):
@@ -32,12 +41,19 @@ class PackerByTime(BasePacker):
         self.merge_event_window = int(merge_event_window)
 
     @coroutine
-    def publish_event(self, event, routing_key):
+    def publish_event(self, event, routing_key=''):
         """
+        publish_event(event, routing_key='')
         Publish an event to RabbitMQ, after having merged it with similar events.
 
         :param event: event to publish
+        :param routing_key: RabbitMQ routing key
         :type event: pyloggr.event.Event
+        :type routing_key: str
+
+        Note
+        ====
+        Tornado coroutine
         """
 
         if self.shutting_down:
@@ -46,7 +62,7 @@ class PackerByTime(BasePacker):
 
         if event.timereported is None:
             # we don't know when the event was emitted, so we just publish it
-            status = yield self.publisher.publish_event(event, routing_key)
+            status, _ = yield self.publisher.publish_event(event, routing_key)
             raise Return((status, event))
 
         # separate events using (source, facility, app_name)
@@ -81,4 +97,3 @@ class PackerByTime(BasePacker):
         status = yield has_been_published
         # yield returns only after the event has been published
         raise Return((status, event))
-
