@@ -16,13 +16,13 @@ from io import open
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileMovedEvent, FileDeletedEvent
-from tornado.gen import coroutine, Return
+from tornado.gen import coroutine, Return, TimeoutError
 from tornado.ioloop import IOLoop, PeriodicCallback
 
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
 from pyloggr.event import Event
 from pyloggr.packers import BasePacker
-from pyloggr.utils import sleep
+from pyloggr.utils import sleep, to_unicode
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class HarvestHandler(FileSystemEventHandler):
 
 
 class Harvest(object):
-    def __init__(self, harvest_config, to_rabbitmq_config):
+    def __init__(self, harvest_config, publisher_config):
         """
         :type harvest_config: pyloggr.config.HarvestConfig
         """
@@ -60,7 +60,7 @@ class Harvest(object):
         self.ready_files = []
         self.periodic = None
         self.conf = harvest_config
-        self.rabbitmq_config = to_rabbitmq_config
+        self.rabbitmq_config = publisher_config
         self.observed_directories = []
         self._publisher = None
         self._closed_ev = None
@@ -69,19 +69,11 @@ class Harvest(object):
         self.observe_directories()
 
     def observe_directories(self):
-        # check that directories exist and are writeable
-        for directory_name in self.conf.directories:
-            if not exists(directory_name):
-                # exception will be eventually handled by processes.py, if directory_name can't be created
-                os.makedirs(directory_name)
-            if not os.access(directory_name, os.W_OK | os.X_OK):
-                raise OSError("'{}' exists but is not writeable".format(directory_name))
-
         # set up observers
-        for directory_name in self.conf.directories:
+        for directory_name in self.conf:
             self.observers[directory_name] = Observer()
             self.observers[directory_name].schedule(
-                HarvestHandler(self), directory_name, recursive=self.conf.directories[directory_name].recursive
+                HarvestHandler(self), directory_name, recursive=self.conf[directory_name].recursive
             )
 
     @coroutine
@@ -99,7 +91,7 @@ class Harvest(object):
     @coroutine
     def launch(self):
         self.observed_files = {}
-        for directory_name in self.conf.directories:
+        for directory_name in self.conf:
             for fname in os.listdir(directory_name):
                 abs_fname = abspath(join(directory_name, fname))
                 if isfile(abs_fname) and not basename(abs_fname).startswith('.'):
@@ -108,7 +100,7 @@ class Harvest(object):
         for observer in self.observers.values():
             observer.start()
 
-        self.periodic = PeriodicCallback(self.check, 1000)
+        self.periodic = PeriodicCallback(self.check, 2000)
         self.periodic.start()
 
     @coroutine
@@ -132,9 +124,9 @@ class Harvest(object):
 
         for fname in stalled_files:
             match_dir_name = {
-                directory_name for directory_name in self.conf.directories if fname.startswith(directory_name)
+                directory_name for directory_name in self.conf if fname.startswith(directory_name)
             }.pop()
-            yield self.upload(fname, self.conf.directories[match_dir_name])
+            IOLoop.instance().add_callback(self.upload, fname, self.conf[match_dir_name])
 
     @coroutine
     def upload(self, fname, directory_obj):
@@ -150,7 +142,7 @@ class Harvest(object):
 
         try:
             current_publisher, closed_ev = yield self.get_publisher()
-        except RabbitMQConnectionError:
+        except (RabbitMQConnectionError, TimeoutError):
             # no connection to rabbitmq
             yield sleep(60)
             self.uploading_list.remove(fname)
@@ -181,7 +173,7 @@ class Harvest(object):
                     facility=directory_obj.facility,
                     app_name=directory_obj.app_name,
                     source=directory_obj.source,
-                    message=line
+                    message=to_unicode(line, fixes=True)
                 )
                 event.add_tags("harvested")
                 event["directory"] = directory_obj.directory_name
