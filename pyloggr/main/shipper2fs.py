@@ -12,14 +12,13 @@ from io import open
 import os
 
 from tornado.concurrent import Future
-from tornado.gen import coroutine, Return
+from tornado.gen import coroutine, Return, TimeoutError
 from tornado.ioloop import IOLoop, PeriodicCallback
-from toro import Timeout
 from sortedcontainers import SortedSet
 import lockfile
 from future.utils import lmap, viewvalues
 
-from pyloggr.rabbitmq.consumer import Consumer, RabbitMQConnectionError, RabbitMQMessage, RabbitMQDeclareQueueTimeout
+from pyloggr.rabbitmq.consumer import Consumer, RabbitMQConnectionError, RabbitMQMessage
 from pyloggr.utils import sleep
 from pyloggr.config import Config
 from pyloggr.event import Event, ParsingError, InvalidSignature
@@ -55,12 +54,13 @@ class FilesystemShipper(object):
     @coroutine
     def launch(self):
         """
+        launch()
         Start shipper2fs
         """
         # connect to RabbitMQ
         try:
             self.closed_conn_event = yield self.consumer.start()
-        except (RabbitMQConnectionError, RabbitMQDeclareQueueTimeout):
+        except (RabbitMQConnectionError, TimeoutError):
             logger.error("Can't connect to RabbitMQ")
             yield sleep(60)
             if not self.shutting_down:
@@ -84,6 +84,7 @@ class FilesystemShipper(object):
     @coroutine
     def stop(self):
         """
+        stop()
         Stops the shipper
         """
         logger.info("Stopping shipper2fs")
@@ -96,6 +97,7 @@ class FilesystemShipper(object):
     @coroutine
     def shutdown(self):
         """
+        shutdown()
         Shutdowns (stops definitely) the shipper.
         """
         logger.info("Shutting down shipper2fs")
@@ -111,8 +113,8 @@ class FilesystemShipper(object):
         # loop until we lose rabbitmq connection
         while (not self.closed_conn_event.is_set()) or (event_queue.qsize() != 0):
             try:
-                message = yield event_queue.get(deadline=timedelta(seconds=1))
-            except Timeout:
+                message = yield event_queue.get_wait(deadline=timedelta(seconds=1))
+            except TimeoutError:
                 pass
             else:
                 IOLoop.instance().add_callback(self.export, message)
@@ -120,6 +122,7 @@ class FilesystemShipper(object):
     @coroutine
     def export(self, message):
         """
+        export(message)
         Export event to filesystem
 
         :param message: RabbitMQ message
@@ -137,14 +140,14 @@ class FilesystemShipper(object):
             security_logger.info(message.body)
         else:
             # put event in export queue and wait until it has been exported
-            res = yield self.append(event)
+            res = yield self._append(event)
             if res:
                 message.ack()
             else:
                 message.nack()
 
     @coroutine
-    def append(self, event):
+    def _append(self, event):
         """
         :type event: pyloggr.event.Event
         """
@@ -186,6 +189,7 @@ class FSQueue(object):
     @coroutine
     def append(self, event):
         """
+        append(event)
         Add an event to the queue. The coroutine resolves when the event has been exported.
 
         :param event: event
@@ -201,6 +205,7 @@ class FSQueue(object):
 
     def flush(self):
         """
+        flush()
         Actually flush the events to the file
         """
         if self._flushing:
@@ -228,6 +233,7 @@ class FSQueue(object):
 
     def stop(self):
         """
+        stop()
         Stop the queue
         """
         self._periodic.stop()

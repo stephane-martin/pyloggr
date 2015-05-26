@@ -10,10 +10,8 @@ import logging
 import socket
 from datetime import timedelta
 
-from tornado.gen import coroutine
+from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import IOLoop
-from toro import Timeout
-
 
 from pyloggr.rabbitmq.consumer import Consumer, RabbitMQConnectionError
 from pyloggr.event import Event, ParsingError, InvalidSignature
@@ -64,7 +62,7 @@ class SyslogShipper(object):
         )
         try:
             self.closed_syslog_event = yield self.syslog_client.start()
-        except (socket.error, Timeout):
+        except (socket.error, TimeoutError):
             logger.error("Shipper2syslog: can't connect to the remote syslog server")
             yield sleep(Config.SLEEP_TIME)
             if not self.shutting_down:
@@ -84,7 +82,7 @@ class SyslogShipper(object):
         self.consumer = Consumer(self.rabbitmq_config)
         try:
             closed_consumer_event = yield self.consumer.start()
-        except (Timeout, RabbitMQConnectionError):
+        except (TimeoutError, RabbitMQConnectionError):
             logger.error("Shipper2syslog: can't connect to consumer to RabbitMQ")
             yield self.stop()
             # stop() will stop the syslog connection too, so closed_syslog_event is going to trigger
@@ -100,8 +98,8 @@ class SyslogShipper(object):
         self.ev_queue = self.consumer.start_consuming()             # SimpleToroQueue
         while self.consumer.consuming and not self.shutting_down:
             try:
-                message = yield self.ev_queue.get(deadline=timedelta(seconds=1))
-            except Timeout:
+                message = yield self.ev_queue.get_wait(deadline=timedelta(seconds=1))
+            except TimeoutError:
                 pass
             else:
                 IOLoop.instance().add_callback(self._forward_message, message)
