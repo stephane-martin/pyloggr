@@ -133,7 +133,7 @@ class SSLConfig(GenericConfig):
     """
     Syslog servers SSL configuration
     """
-    def __init__(self, certfile, keyfile, ssl_version="PROTOCOL_SSLv23", ca_certs=ssl_module.CERT_NONE,
+    def __init__(self, certfile, keyfile, ssl_version="PROTOCOL_SSLv23", ca_certs='',
                  cert_reqs=ssl_module.CERT_NONE):
 
         certfile = abspath(expanduser(certfile))
@@ -150,12 +150,23 @@ class SSLConfig(GenericConfig):
             self.ssl_version = ssl_module.PROTOCOL_SSLv23
         else:
             self.ssl_version = getattr(ssl.module, ssl_version, ssl_module.PROTOCOL_SSLv23)
-        if (ca_certs is None) or (ca_certs == "CERT_NONE") or (ca_certs == ''):
-            self.ca_certs = ssl_module.CERT_NONE
+        if ca_certs is None:
+            self.ca_certs = ''
+        elif (ca_certs.lower() == "none") or (ca_certs == ''):
+            self.ca_certs = ''
         else:
-            self.ca_certs = getattr(ssl_module, ca_certs, ssl_module.CERT_NONE)
-        if (cert_reqs is None) or (cert_reqs == "CERT_NONE") or (cert_reqs == ''):
+            certs_path = abspath(expanduser(ca_certs))
+            if not exists(certs_path):
+                raise ValueError("ca_certs file '{}' does not exist".format(ca_certs))
+            self.ca_certs = certs_path
+        if cert_reqs is None:
             self.cert_reqs = ssl_module.CERT_NONE
+        elif (cert_reqs.lower() == "cert_none") or (cert_reqs == '') or (cert_reqs.lower() == "none"):
+            self.cert_reqs = ssl_module.CERT_NONE
+        elif (cert_reqs.lower() == "cert_optional") or (cert_reqs.lower() == "optional"):
+            self.cert_reqs = ssl_module.CERT_OPTIONAL
+        elif (cert_reqs.lower() == "cert_required") or (cert_reqs.lower() == "required"):
+            self.cert_reqs = ssl_module.CERT_REQUIRED
         else:
             self.cert_reqs = getattr(ssl_module, cert_reqs, ssl_module.CERT_NONE)
 
@@ -166,7 +177,7 @@ class LoggingConfig(GenericConfig):
     """
     def __init__(self, level="DEBUG", **kwargs):
         for name in ['security', 'syslog', 'filtermachine', 'frontend', 'shipper2fs', 'shipper2pgsql', 'harvest',
-                     'collector']:
+                     'collector', 'shipper2syslog']:
             self.__setattr__(name, str(kwargs.get(name, "~/logs/pyloggr.{}.log".format(name))))
         self.level = str(level) if level else "DEBUG"
 
