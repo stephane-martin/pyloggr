@@ -8,7 +8,6 @@ __author__ = 'stef'
 
 import logging
 from copy import copy
-from itertools import chain
 from math import fabs
 
 from tornado.gen import coroutine
@@ -18,7 +17,6 @@ from arrow import Arrow
 from sortedcontainers import SortedSet
 
 from pyloggr.utils.constants import SEVERITY, SEVERITY_TO_INT
-from pyloggr.utils import to_unicode
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +24,14 @@ logger = logging.getLogger(__name__)
 def merge_events(list_of_events):
     """
     Merge several events into a single one
+
     :param list_of_events: events to merge
-    :type list_of_events: list of Events
+    :type list_of_events: list of pyloggr.event.Event
     :return: global single Event
-    :rtype: Event
+    :rtype: pyloggr.event.Event
     """
     if not list_of_events:
         return None
-    # we need a timereported to sort events correctly
-    for event in list_of_events:
-        if not event.timereported:
-            event.timereported = event.timegenerated
 
     unique_events = SortedSet(list_of_events)
     nb = len(unique_events)
@@ -46,49 +41,24 @@ def merge_events(list_of_events):
     merged_event = copy(unique_events[0])
     # merge messages
     merged_event.message = u'\n'.join(event.message for event in unique_events)
-    # merge tags
-    merged_event._tags = set(chain.from_iterable(event.tags for event in unique_events))
     # merge severity
     merged_event.severity = SEVERITY[min(SEVERITY_TO_INT[event.severity] for event in unique_events)]
 
-    # merge custom fields
-    merged_custom_fields = {}
-    merged_field_keys = {key for event in unique_events for key in event}
-    for field_key in merged_field_keys:
-        values = {to_unicode(event[field_key]) for event in unique_events if field_key in event}
-        # multiples values from different events are merged in a comma separated list
-        merged_custom_fields[field_key] = u','.join(values)
-    merged_custom_fields['merged_from_nb_event'] = nb
-    merged_event.custom_fields = merged_custom_fields
-
-    # merge structured data
-    # structured data is a dict
-    # event.structured_data[SDID][SD_PARAM_NAME] = SD_PARAM_VALUE
-    merged_structured_data = {}
-    sdids = {sdid for event in unique_events for sdid in event.structured_data}
-    for sdid in sdids:
-        merged_structured_data[sdid] = {}
-        events = {event for event in unique_events if sdid in event.structured_data}
-        params_names = {param_name for event in events for param_name in event['sdid']}
-        for param_name in params_names:
-            param_values = {
-                to_unicode(event['sdid'][param_name]) for event in events if param_name in event['sdid']
-            }
-            # multiples param_values from different events are merged in a comma separated list
-            merged_structured_data[sdid][param_name] = u','.join(param_values)
-
-    merged_event.structured_data = merged_structured_data
+    # merge structured data (included tags and custom fields)
+    list(merged_event.structured_data.update(event.structured_data) for event in unique_events)
 
     # generate a new UUID
-    merged_event.generate_uuid(overwrite=True)
+    merged_event.generate_uuid()
     # generate a new HMAC if needed
-    if any(event.hmac for event in unique_events):
-        merged_event.generate_hmac(verify_if_exists=False)
+    merged_event.generate_hmac(verify_if_exists=False)
 
     return merged_event
 
 
 class PackerQueue(list):
+    """
+    PackerQueues temporarily store events that "match together" before they are published.
+    """
     def __init__(self, publisher, routing_key, i=None):
         i = [] if i is None else i
         super(PackerQueue, self).__init__(i)
@@ -97,6 +67,9 @@ class PackerQueue(list):
         self.last_action = Arrow.utcnow()
 
     def copy_and_void(self):
+        """
+        Empty the queue and return a copy of it
+        """
         q = PackerQueue(self.publisher, self.routing_key, i=self)
         self[:] = []
         self.last_action = Arrow.utcnow()
@@ -107,19 +80,13 @@ class PackerQueue(list):
         """
         Merge and publish the events that have been stored in the queue
         """
-
         l = len(self)
         if l == 0:
             return
         copy_of_queue = self.copy_and_void()
-        if l == 1:
-            merged_event = copy_of_queue[0]
-        else:
-            merged_event = merge_events(copy_of_queue)
-
+        merged_event = merge_events(copy_of_queue)
         # publish the merged event to the next publisher
         status, ev = yield self.publisher.publish_event(merged_event, self.routing_key)
-
         # notify that all the events that are stored in this queue have been published
         for event in copy_of_queue:
             event.have_been_published.set_result(status)
@@ -127,6 +94,9 @@ class PackerQueue(list):
     def append(self, event):
         """
         Append an event to the queue
+
+        :param event: the event to append
+        :type event: pyloggr.event.Event
         """
         super(PackerQueue, self).append(event)
         self.last_action = Arrow.utcnow()
@@ -135,6 +105,9 @@ class PackerQueue(list):
 
 
 class BasePacker(object):
+    """
+    Boilerplate for concrete packers
+    """
     def __init__(self, publisher, queue_max_age):
         self.queues = dict()
         self.publisher = publisher
@@ -148,6 +121,9 @@ class BasePacker(object):
         raise NotImplementedError
 
     def shutdown(self):
+        """
+        Cleanly stop the packer activity
+        """
         if self.shutting_down:
             return
         self.shutting_down = True
