@@ -22,8 +22,8 @@ class Formatters(object):
         frmat = frmat.replace("]", r"\]")
         frmat = frmat.replace("$WORD", r"\S+")
         frmat = frmat.replace("$INT", r"\d+")
-        #2014-12-14 01:44:16 or 141214 01:44:16
-        frmat = frmat.replace("$DATETIME", r"(?P<DATETIME>\d\S+\d\s\d\S+\d)")
+        # 2014-12-14 01:44:16 or 141214 01:44:16 or 2015-05-18T20:04:51.660406+00:00
+        frmat = frmat.replace("$DATETIME", r"(?P<DATETIME>\d\S+\d(\s|T)\d\S+\dZ?)")
         frmat = frmat.replace("$SEVERITY", r"(?P<SEVERITY>\S+)")
         frmat = frmat.replace("$FACILITY", r"(?P<FACILITY>\S+)")
         frmat = frmat.replace("$MESSAGE", r"(?P<MESSAGE>.*)")
@@ -61,10 +61,20 @@ class PackerByFormat(BasePacker):
     """
     A format based packer detects the beginning of an event using a pattern, and merges lines until the next
     time the format will be detected
+
+    Parameters
+    ==========
+    publisher: BasePacker or pyloggr.rabbitmq.publisher.Publisher
+        Publisher where to send merge events
+    start_formats: str or list
+        Format of messages that start a merged event
+    queue_max_age: int
+        Queues older that queue_max_age, in milliseconds, will be published
     """
 
-    def __init__(self, publisher, start_formats, queue_max_age=10000):
+    def __init__(self, publisher, start_formats, queue_max_age=5000):
         """
+        :type publisher: BasePacker or pyloggr.rabbitmq.publisher.Publisher
         :type start_formats: str or list
         :type queue_max_age: int
         """
@@ -72,12 +82,14 @@ class PackerByFormat(BasePacker):
         self.formatters = Formatters(start_formats)
 
     @coroutine
-    def publish_event(self, event, routing_key):
+    def publish_event(self, event, routing_key=''):
         """
         Publish the event, after merging if necessary
 
         :param event: the event to publish
+        :param routing_key: RabbitMQ routing key
         :type event: pyloggr.event.Event
+        :type routing_key: str
         """
 
         if self.shutting_down:
@@ -89,8 +101,6 @@ class PackerByFormat(BasePacker):
             self.queues[h] = PackerQueue(self.publisher, routing_key)
         queue = self.queues[h]
 
-
-
         if len(queue) == 0:
             if self.formatters.apply(event):
                 # the event matches start_format: store it in the empty queue
@@ -99,7 +109,7 @@ class PackerByFormat(BasePacker):
             else:
                 # we don't have any event in queue, and the current event is not a "start event"
                 # so we just publish it...
-                status = yield self.publisher.publish_event(event, routing_key)
+                status, _ = yield self.publisher.publish_event(event, routing_key)
                 raise Return((status, event))
 
         # we have a previous start event in queue
