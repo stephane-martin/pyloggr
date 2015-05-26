@@ -80,9 +80,9 @@ def check_directory(dname):
     dname = abspath(expanduser(dname))
     if exists(dname):
         if not isdir(dname):
-            raise OSError("'{}' exists but is not a directory".format(dname))
+            raise ValueError("'{}' exists but is not a directory".format(dname))
         if not os.access(dname, os.W_OK | os.X_OK):
-            raise OSError("'{}' is not writeable".format(dname))
+            raise ValueError("'{}' is not writeable".format(dname))
     else:
         os.makedirs(dname)
     return dname
