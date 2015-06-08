@@ -91,10 +91,10 @@ class RELPClient(object):
             )
             self.stream = yield connect_future
         except socket.error:
-            logger.error("TCP syslog client could not connect (socket.error)")
+            logger.error("RELP client could not connect (socket.error)")
             raise
         except TimeoutError:
-            logger.error("TCP syslog client could not connect (timeout)")
+            logger.error("RELP client could not connect (timeout)")
             raise
 
         if self.use_ssl:
@@ -202,6 +202,7 @@ class RELPClient(object):
 
         acks = {}
         unexpected_close = ToroEvent()
+        print("AHHHH", unexpected_close.is_set())
         n_start = self.current_relp_id
         got_all_answers = ToroEvent()
 
@@ -224,6 +225,8 @@ class RELPClient(object):
                     self.stream.close()
                     unexpected_close.set()
                     return
+                if code == 200:
+                    logger.debug("Remote RELP server ACKed one message")
                 acks[response_id - n_start] = True if code == 200 else False
 
         # receive the responses in background
@@ -238,12 +241,13 @@ class RELPClient(object):
                 yield self.stream.write(relp_line)
                 self.current_relp_id += 1
         except StreamClosedError:
+            logger.info("Relp client sending events: Stream closed error ?!")
             unexpected_close.set()
 
         nb_total_events = self.current_relp_id - n_start
 
         # wait that until we have all answers
-        while (len(acks) != nb_total_events) and (not unexpected_close.set()):
+        while (len(acks) != nb_total_events) and (not unexpected_close.is_set()):
             yield sleep(1)
         if len(acks) == nb_total_events:
             got_all_answers.set()
@@ -261,8 +265,11 @@ class RELPClient(object):
         :param frmt: event dumping format
         :type event: Event
         """
-        status, _ = yield self.send_events([event], frmt=frmt)
-        raise Return((status, event))
+        status, acks = yield self.send_events([event], frmt=frmt)
+        if not status:
+            raise Return((False, event))
+        else:
+            raise Return((acks[0], event))
 
     @coroutine
     def send_message(self, message, source, severity, facility, app_name, frmt="RFC5424"):
