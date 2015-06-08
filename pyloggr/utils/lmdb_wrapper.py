@@ -6,7 +6,11 @@ Small wrapper around lmdb
 __author__ = 'stef'
 
 import logging
+import time
 
+# noinspection PyCompatibility
+from concurrent.futures import ThreadPoolExecutor, Future
+from tornado.ioloop import IOLoop
 import ujson
 import lmdb
 from future.utils import viewitems
@@ -23,6 +27,12 @@ def _json_decode(obj_bytes):
         ))
         return None
 
+def _dumps(obj):
+    if hasattr(obj, 'dumps'):
+        return to_bytes(obj.dumps())
+    else:
+        return to_bytes(ujson.dumps(obj))
+
 
 class LmdbWrapper(object):
     """
@@ -35,11 +45,12 @@ class LmdbWrapper(object):
         self.env = None
         self.size = size
 
-    def open(self):
+    def open(self, sync=True, metasync=True, lock=True, max_dbs=10, max_spare_txns=10):
         if not self.env:
             # noinspection PyArgumentList
             self.env = lmdb.Environment(
-                path=self.path, map_size=self.size, max_dbs=0, max_spare_txns=3
+                path=self.path, map_size=self.size, max_dbs=max_dbs, sync=sync, metasync=metasync,
+                lock=lock, max_spare_txns=max_spare_txns
             )
             self.opened_db[self.path] = self
         return self
@@ -48,7 +59,8 @@ class LmdbWrapper(object):
         if self.env:
             self.env.close()
             self.env = None
-            del self.opened_db[self.path]
+            if self.path in self.opened_db:
+                del self.opened_db[self.path]
 
     def __enter__(self):
         return self.open()
@@ -110,14 +122,13 @@ class LmdbWrapper(object):
 
     def put_obj(self, key, obj):
         key = to_bytes(key)
-        obj_bytes = to_bytes(ujson.dumps(obj))
         with self.env.begin(write=True) as txn:
-            return txn.put(key, obj_bytes, overwrite=True)
+            return txn.put(key, _dumps(obj), overwrite=True)
 
     def put_many_objs(self, d):
         with self.env.begin(write=True) as txn:
             return {
-                key: txn.put(to_bytes(key), to_bytes(ujson.dumps(obj)), overwrite=True)
+                key: txn.put(to_bytes(key), _dumps(obj), overwrite=True)
                 for key, obj in viewitems(dict(d))
             }
 
@@ -132,92 +143,6 @@ class LmdbWrapper(object):
                 key: txn.delete(to_bytes(key))
                 for key in keys
             }
-
-    def rpush(self, queue_name, obj):
-        queue_name = to_bytes("__queue__" + queue_name)
-        start_keyname = queue_name + "__start"
-        end_keyname = queue_name + "__end"
-        obj_bytes = to_bytes(ujson.dumps(obj))
-        with self.env.begin(write=True) as txn:
-            start_idx = txn.get(start_keyname)
-            end_idx = int(txn.get(end_keyname, default=-1))
-            obj_idx = queue_name + '__' + str(end_idx + 1)
-            txn.put(end_keyname, str(end_idx + 1), overwrite=True)
-            if start_idx is None:
-                txn.put(start_keyname, "0", overwrite=True)
-            return txn.put(obj_idx, obj_bytes)
-
-    def rpush_many(self, queue_name, objs):
-        queue_name = "__queue__" + to_bytes(queue_name)
-        start_keyname = queue_name + "__start"
-        end_keyname = queue_name + "__end"
-        with self.env.begin(write=True) as txn:
-            start_idx = txn.get(start_keyname)
-            end_idx = int(txn.get(end_keyname, default=-1))
-            results = [
-                txn.put(
-                    queue_name + '__' + str(end_idx + 1 + i),
-                    to_bytes(ujson.dumps(obj))
-                )
-                for i, obj in enumerate(objs)
-            ]
-            if len(results):
-                txn.put(end_keyname, str(end_idx + len(results)), overwrite=True)
-                if start_idx is None:
-                    txn.put(start_keyname, "0", overwrite=True)
-        return results.count(True)
-
-    def lpop(self, queue_name):
-        queue_name = "__queue__" + to_bytes(queue_name)
-        start_keyname = queue_name + "__start"
-        end_keyname = queue_name + "__end"
-        with self.env.begin(write=True) as txn:
-            start_idx = txn.get(start_keyname)
-            end_idx = txn.get(end_keyname)
-            if start_idx is None or end_idx is None:
-                return None
-            obj_idx = queue_name + '__' + start_idx
-            obj_bytes = txn.pop(obj_idx)
-            start_idx = int(start_idx)
-            end_idx = int(end_idx)
-            if start_idx == end_idx:
-                # no more object in the queue
-                txn.delete(start_keyname)
-                txn.delete(end_keyname)
-            else:
-                txn.put(start_keyname, str(start_idx + 1), overwrite=True)
-        if obj_bytes:
-            return _json_decode(obj_bytes)
-        return None
-
-    def pop_all(self, queue_name):
-        queue_name = "__queue__" + to_bytes(queue_name)
-        start_keyname = queue_name + "__start"
-        end_keyname = queue_name + "__end"
-        with self.env.begin(write=True) as txn:
-            start_idx = txn.get(start_keyname)
-            end_idx = txn.get(end_keyname)
-            if start_idx is None or end_idx is None:
-                return None
-            start_idx = int(start_idx)
-            end_idx = int(end_idx)
-            objs_idx = (queue_name + '__' + str(idx) for idx in range(start_idx, end_idx + 1))
-            objs_bytes = [txn.pop(idx) for idx in objs_idx]
-            txn.delete(start_keyname)
-            txn.delete(end_keyname)
-        results = (_json_decode(obj_bytes) for obj_bytes in objs_bytes if obj_bytes)
-        return [result for result in results if result]
-
-    def queue_length(self, queue_name):
-        queue_name = "__queue__" + to_bytes(queue_name)
-        start_keyname = queue_name + "__start"
-        end_keyname = queue_name + "__end"
-        with self.env.begin() as txn:
-            start_idx = txn.get(start_keyname)
-            end_idx = txn.get(end_keyname)
-        if start_idx is None or end_idx is None:
-            return 0
-        return int(end_idx) - int(start_idx) + 1
 
     def add_to_set(self, set_name, item):
         item = to_unicode(item)
@@ -314,24 +239,120 @@ class Hash(object):
 
 class Queue(object):
     def __init__(self, queue_name, wrapper):
+        """
+        :type wrapper: LmdbWrapper
+        """
         self.queue_name = to_bytes(queue_name)
+        self.subdbname = "__queue__" + self.queue_name
+        self.subdb = wrapper.env.open_db(key=self.subdbname, txn=None, reverse_key=False, dupsort=False, create=True)
+        self.env = wrapper.env
         self.wrapper = wrapper
 
-    def rpush(self, value):
-        return self.wrapper.rpush(self.queue_name, value)
+    def generator(self, exclude=None):
+        if exclude is None:
+            exclude = set()
+        with self.env.begin(db=self.subdb, write=False) as txn:
+            with txn.cursor(db=self.subdb) as c:
+                if not c.first():
+                    return
+                for key, value in c.iternext(keys=True, values=True):
+                    if key in exclude:
+                        continue
+                    if key:
+                        if value is not None:
+                            obj = _json_decode(value)
+                            if obj:
+                                yield (key, obj)
 
-    def append(self, value):
-        return self.wrapper.rpush(self.queue_name, value)
+    def push(self, obj, idx=None):
+        if idx is None:
+            idx = to_bytes(obj.lmdb_idx())
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            idx = to_bytes(idx)
+            if hasattr(obj, 'dumps'):
+                obj_bytes = to_bytes(obj.dumps())
+            else:
+                obj_bytes = to_bytes(ujson.dumps(obj))
+            result = txn.put(idx, obj_bytes, overwrite=True)
+        return result
+
+    def delete(self, obj=None, idx=None):
+        if obj is None and idx is None:
+            return None
+        if idx is not None:
+            with self.env.begin(db=self.subdb, write=True) as txn:
+                return txn.delete(to_bytes(idx), db=self.subdb)
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            return txn.delete(to_bytes(obj.lmdb_idx()), db=self.subdb)
+
+    def pop(self):
+        return self.lpop()
 
     def lpop(self):
-        return self.wrapper.lpop(self.queue_name)
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            with txn.cursor(db=self.subdb) as c:
+                if c.first():
+                    idx, obj_bytes = c.item()
+                    if obj_bytes is None:
+                        c.delete()
+                        return None
+                    else:
+                        obj = _json_decode(obj_bytes)
+                        if obj is None:
+                            c.delete()
+                            return None
+                        else:
+                            c.delete()
+                            return idx, obj
+                else:
+                    # queue is empty
+                    return None
 
     def pop_all(self):
-        return self.wrapper.pop_all(self.queue_name)
+        results = []
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            with txn.cursor(db=self.subdb) as c:
+                if not c.first():
+                    return []
+                for key in c.iternext(keys=True, values=False):
+                    value = c.pop(key)
+                    if value:
+                        obj = _json_decode(value)
+                        if obj:
+                            results.append((key, obj))
+        return results
 
-    def __len__(self):
-        return self.wrapper.queue_length(self.queue_name)
+    def empty(self):
+        with self.env.begin(db=self.subdb, write=False) as txn:
+            with txn.cursor(db=self.subdb) as c:
+                return not c.first()
 
     def extend(self, values):
-        return self.wrapper.rpush_many(self.queue_name, values)
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            results = [txn.put(to_bytes(obj.lmdb_idx()), to_bytes(ujson.dumps(obj)), overwrite=True) for obj in values]
+        return results
 
+    def lpop_wait(self, timeout):
+        f = Future()
+        exe = ThreadPoolExecutor(max_workers=3)
+
+        def _wait_until_not_empty():
+            while self.empty():
+                time.sleep(1)
+
+        def _maybe_ive_got_an_element(g):
+            result = g.result()
+            if result is not None:
+                f.set_result(result)
+                exe.shutdown()
+            else:
+                wait_until_g = exe.submit(_wait_until_not_empty)
+                IOLoop.current().add_future(wait_until_g, _maybe_im_not_empty)
+
+        def _maybe_im_not_empty(g):
+            popping_f = exe.submit(self.lpop)
+            IOLoop.current().add_future(popping_f, _maybe_ive_got_an_element)
+
+        wait_until_f = exe.submit(_wait_until_not_empty)
+        IOLoop.current().add_future(wait_until_f, _maybe_im_not_empty)
+        return f
