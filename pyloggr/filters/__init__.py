@@ -12,9 +12,9 @@ __author__ = 'stef'
 from os.path import join
 import logging
 from threading import Lock
-from itertools import chain, imap, ifilter
+from itertools import chain, imap
 
-from future.utils import viewitems
+from future.utils import viewitems, viewvalues
 from .build_filters_config import parse_config_file, FilterBlock, IfBlock, IfFilterBlock, Assignment, TagsAssignment
 from .grok import GrokEngine
 from .geoip import GeoIPEngine
@@ -45,22 +45,20 @@ class Filters(object):
         self.filter_instructions = parse_config_file(join(config_directory, 'filters', filename + '.conf'))
         # here we initialize the filters
         self._filters = {
-            name: module(config_directory) for (name, module) in self.filters_modules.items()
+            name: module(config_directory) for (name, module) in viewitems(self.filters_modules)
         }
 
     def open(self):
         """
         Initialize the filters
         """
-        for module in self._filters.values():
-            module.open()
+        [module.open() for module in viewvalues(self._filters)]
 
     def close(self):
         """
         Cleanly close the filters
         """
-        for module in self._filters.values():
-            module.close()
+        [module.close() for module in viewvalues(self._filters)]
 
     def apply(self, ev):
         """
