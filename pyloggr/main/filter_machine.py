@@ -182,7 +182,7 @@ class FilterMachine(object):
         :rtype: tuple(pyloggr.consumer.RabbitMQMessage, pyloggr.event.Event)
         """
         try:
-            ev = Event.parse_bytes_to_event(message.body, hmac=True, json=True)
+            ev = Event.parse_bytes_to_event(message.body, hmac=True)
         except ParsingError:
             # should not happen, as pyloggr's syslog server just sent the event
             logger.error("Dropping one unparsable event")
