@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 security_logger = logging.getLogger("security")
 
 
+# todo: lz4 compression
+
 class SyslogClient(object):
     """
     Utility class to send messages or whole files to a syslog server, using TCP
@@ -40,7 +42,7 @@ class SyslogClient(object):
     """
 
     def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None,
-                 client_key=None, client_cert=None):
+                 client_key=None, client_cert=None, server_deadline=None):
         self.server = server
         self.port = port
         self.stream = None
