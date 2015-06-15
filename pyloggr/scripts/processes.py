@@ -3,30 +3,18 @@
 """
 Describe the pyloggr's processes.
 """
-
+from __future__ import absolute_import, division, print_function
 __author__ = 'stef'
 
 import logging
-
-import ftfy
-from future.builtins import chr
 
 from tornado.gen import coroutine
 from tornado.ioloop import IOLoop
 
 from pyloggr.scripts import PyloggrProcess
-from pyloggr.main.syslog_server import MainSyslogServer, SyslogParameters
-from pyloggr.main.filter_machine import FilterMachine
-from pyloggr.main.shipper2pgsql import PostgresqlShipper
-from pyloggr.main.shipper2fs import FilesystemShipper
-from pyloggr.main.shipper2syslog import SyslogShipper
-from pyloggr.main.web_frontend import WebServer
-from pyloggr.main.harvest import Harvest
-from pyloggr.main.collector import EventCollector
+from pyloggr.utils import drop_caps_or_change_user
 from pyloggr.rabbitmq import Configuration as RabbitConfig
 from pyloggr.config import Config, Shipper2FSConfig, Shipper2SyslogConfig
-
-logger = logging.getLogger(__name__)
 
 
 class SyslogProcess(PyloggrProcess):
@@ -35,11 +23,17 @@ class SyslogProcess(PyloggrProcess):
     """
     def __init__(self):
         PyloggrProcess.__init__(self, fork=True)
+        from pyloggr.main.syslog_server import SyslogParameters
+
         self.syslog_config = SyslogParameters(Config.SYSLOG)
         self.syslog_config.bind_all_sockets()
+        # now that we have bound the sockets, we can drop privileges
+        drop_caps_or_change_user(Config.UID, Config.GID)
 
     @coroutine
     def _launch(self):
+        from pyloggr.main.syslog_server import MainSyslogServer
+
         publisher_config = RabbitConfig(
             host=Config.RABBITMQ.host,
             port=Config.RABBITMQ.port,
@@ -55,6 +49,23 @@ class SyslogProcess(PyloggrProcess):
             syslog_parameters=self.syslog_config,
             server_id=self.task_id
         )
+        self.logger.info("Starting {}".format(self.name))
+        yield self.pyloggr_process.launch()
+
+
+class SyslogAgentProcess(PyloggrProcess):
+    """
+    Implements a syslog agent for end clients
+    """
+    def __init__(self):
+        PyloggrProcess.__init__(self, fork=False)
+
+    @coroutine
+    def _launch(self):
+        from pyloggr.main.agent import SyslogAgent
+        self.pyloggr_process = SyslogAgent(Config.SYSLOG_AGENT)
+        self.pyloggr_process.syslog_parameters.bind_all_sockets()
+        drop_caps_or_change_user(Config.UID, Config.GID)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
 
@@ -95,6 +106,7 @@ class FilterMachineProcess(PyloggrProcess):
                 application_id=machine_config.destination.application_id,
                 event_type=machine_config.destination.event_type
             )
+            from pyloggr.main.filter_machine import FilterMachine
             process = FilterMachine(
                 consumer_config=consumer_config,
                 publisher_config=publisher_config,
@@ -127,6 +139,7 @@ class PgSQLShipperProcess(PyloggrProcess):
                 qos=shipper_config.event_stack_size + 10,
                 binding_key=None
             )
+            from pyloggr.main.shipper2pgsql import PostgresqlShipper
             process = PostgresqlShipper(consumer_config, shipper_config)
             self.pyloggr_process.append(process)
             self.logger.info("Starting PGSQL shipper '{}'".format(name))
@@ -156,6 +169,7 @@ class FSShipperProcess(PyloggrProcess):
                 # qos=shipper_config.event_stack_size + 10,
                 # binding_key=None
             )
+            from pyloggr.main.shipper2fs import FilesystemShipper
             process = FilesystemShipper(consumer_config, shipper_config)
             self.pyloggr_process.append(process)
             self.logger.info("Starting FS shipper '{}'".format(name))
@@ -184,6 +198,7 @@ class SyslogShipperProcess(PyloggrProcess):
                 qos=shipper_config.source_qos
                 # binding_key=None ?
             )
+            from pyloggr.main.shipper2syslog import SyslogShipper
             process = SyslogShipper(consumer_config, shipper_config)
             self.pyloggr_process.append(process)
             self.logger.info("Starting syslog shipper '{}'".format(name))
@@ -195,11 +210,15 @@ class FrontendProcess(PyloggrProcess):
     Web frontend to Pyloggr
     """
     def __init__(self):
+        from tornado.netutil import bind_sockets
         PyloggrProcess.__init__(self, fork=False)
+        self.sockets = bind_sockets(Config.HTTP_PORT)
+        drop_caps_or_change_user(Config.UID, Config.GID)
 
     @coroutine
     def _launch(self):
-        self.pyloggr_process = WebServer()
+        from pyloggr.main.web_frontend import WebServer
+        self.pyloggr_process = WebServer(self.sockets)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
 
@@ -223,13 +242,14 @@ class HarvestProcess(PyloggrProcess):
             application_id=Config.SYSLOG_PUBLISHER.application_id,
             event_type=Config.SYSLOG_PUBLISHER.event_type
         )
+        from pyloggr.main.harvest import Harvest
         try:
             self.pyloggr_process = Harvest(
                 harvest_config=Config.HARVEST,
                 publisher_config=publisher_config
             )
         except OSError:
-            logger.exception("Harvest Initialization failed")
+            logging.getLogger(__name__).exception("Harvest Initialization failed")
             IOLoop.instance().add_callback(self.shutdown)
         else:
             self.logger.info("Starting {}".format(self.name))
@@ -255,6 +275,7 @@ class CollectorProcess(PyloggrProcess):
             application_id=Config.SYSLOG_PUBLISHER.application_id,
             event_type=Config.SYSLOG_PUBLISHER.event_type
         )
+        from pyloggr.main.collector import EventCollector
         self.pyloggr_process = EventCollector(rabbitmq_config=publisher_config)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()

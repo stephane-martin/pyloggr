@@ -19,8 +19,8 @@ from tornado.gen import coroutine
 from future.utils import lmap
 
 from pyloggr.config import Config
-from pyloggr.cache import cache, CacheError
-
+from pyloggr.cache import Cache
+from pyloggr.event import Event
 
 class PyloggrProcess(object):
     """
@@ -44,11 +44,9 @@ class PyloggrProcess(object):
         """
         self.logger = logging.getLogger('pyloggr')
 
-        try:
-            cache.initialize()
-        except CacheError as err:
-            self.logger.error(err)
-            return
+        Event.set_hmac_key(Config.HMAC_KEY)
+
+        Cache.initialize()
 
         signal(SIGTERM, self._parent_sig_handler)
         signal(SIGINT, self._parent_sig_handler)
@@ -150,7 +148,7 @@ class PyloggrProcess(object):
 
         _stop_loop(countdown)
 
-        cache.shutdown()
+        Cache.shutdown()
         if (self.task_id == -1) and (not self.fork):
             from pyloggr.utils import remove_pid_file
             remove_pid_file(self.name)
