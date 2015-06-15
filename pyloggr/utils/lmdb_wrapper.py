@@ -19,6 +19,8 @@ from pyloggr.utils import to_bytes, to_unicode
 
 
 def _json_decode(obj_bytes):
+    if obj_bytes is None:
+        return None
     try:
         return ujson.loads(obj_bytes)
     except (ValueError, TypeError):
@@ -26,6 +28,7 @@ def _json_decode(obj_bytes):
             to_unicode(obj_bytes)
         ))
         return None
+
 
 def _dumps(obj):
     if hasattr(obj, 'dumps'):
@@ -247,6 +250,15 @@ class Queue(object):
         self.subdb = wrapper.env.open_db(key=self.subdbname, txn=None, reverse_key=False, dupsort=False, create=True)
         self.env = wrapper.env
         self.wrapper = wrapper
+        self.exe = None
+
+    def __enter__(self):
+        self.exe = ThreadPoolExecutor(max_workers=10)
+        return self
+
+    def __exit__(self, type, value, traceback):
+        if self.exe is not None:
+            self.exe.shutdown()
 
     def generator(self, exclude=None):
         if exclude is None:
@@ -265,8 +277,7 @@ class Queue(object):
                                 yield (key, obj)
 
     def push(self, obj, idx=None):
-        if idx is None:
-            idx = to_bytes(obj.lmdb_idx())
+        idx = to_bytes(obj.lmdb_idx()) if idx is None else to_bytes(idx)
         with self.env.begin(db=self.subdb, write=True) as txn:
             idx = to_bytes(idx)
             if hasattr(obj, 'dumps'):
@@ -279,34 +290,36 @@ class Queue(object):
     def delete(self, obj=None, idx=None):
         if obj is None and idx is None:
             return None
-        if idx is not None:
-            with self.env.begin(db=self.subdb, write=True) as txn:
-                return txn.delete(to_bytes(idx), db=self.subdb)
+        idx = to_bytes(obj.lmdb_idx()) if idx is None else to_bytes(idx)
         with self.env.begin(db=self.subdb, write=True) as txn:
-            return txn.delete(to_bytes(obj.lmdb_idx()), db=self.subdb)
-
-    def pop(self):
-        return self.lpop()
+            return txn.delete(idx, db=self.subdb)
 
     def lpop(self):
         with self.env.begin(db=self.subdb, write=True) as txn:
             with txn.cursor(db=self.subdb) as c:
                 if c.first():
-                    idx, obj_bytes = c.item()
+                    idx = c.key()
+                    obj_bytes = c.pop(idx)
                     if obj_bytes is None:
-                        c.delete()
                         return None
                     else:
                         obj = _json_decode(obj_bytes)
                         if obj is None:
-                            c.delete()
                             return None
                         else:
-                            c.delete()
                             return idx, obj
+
                 else:
                     # queue is empty
                     return None
+
+    def pop(self, key=None):
+        if key is None:
+            return self.lpop()
+        key = to_bytes(key)
+        with self.env.begin(db=self.subdb, write=True) as txn:
+            obj_bytes = txn.pop(key)
+            return _json_decode(obj_bytes)
 
     def pop_all(self):
         results = []
@@ -315,11 +328,9 @@ class Queue(object):
                 if not c.first():
                     return []
                 for key in c.iternext(keys=True, values=False):
-                    value = c.pop(key)
-                    if value:
-                        obj = _json_decode(value)
-                        if obj:
-                            results.append((key, obj))
+                    obj = _json_decode(c.pop(key))
+                    if obj:
+                        results.append((key, obj))
         return results
 
     def empty(self):
@@ -332,27 +343,56 @@ class Queue(object):
             results = [txn.put(to_bytes(obj.lmdb_idx()), to_bytes(ujson.dumps(obj)), overwrite=True) for obj in values]
         return results
 
-    def lpop_wait(self, timeout):
+    def keys(self):
+        with self.env.begin(db=self.subdb) as txn:
+            with txn.cursor(db=self.subdb) as c:
+                if not c.first():
+                    return set()
+                return set(c.iternext(keys=True, values=False))
+
+
+    def wait_not_empty_future(self, timeout=None, tick=1.0):
         f = Future()
-        exe = ThreadPoolExecutor(max_workers=3)
+        exe = None
+        if self.exe is None:
+            exe = ThreadPoolExecutor(max_workers=10)
 
         def _wait_until_not_empty():
             while self.empty():
-                time.sleep(1)
+                print('empty')
+                time.sleep(tick)
 
-        def _maybe_ive_got_an_element(g):
-            result = g.result()
-            if result is not None:
-                f.set_result(result)
-                exe.shutdown()
-            else:
-                wait_until_g = exe.submit(_wait_until_not_empty)
-                IOLoop.current().add_future(wait_until_g, _maybe_im_not_empty)
+        def _nothing(g=None):
+            if not f.done():
+                f.set_result(None)
+            if exe is not None:
+                exe.shutdown(wait=False)
 
-        def _maybe_im_not_empty(g):
-            popping_f = exe.submit(self.lpop)
-            IOLoop.current().add_future(popping_f, _maybe_ive_got_an_element)
+        if timeout is not None:
+            IOLoop.current().call_later(int(timeout), _nothing)
+        if self.exe is None:
+            wait_until_f = exe.submit(_wait_until_not_empty)
+        else:
+            wait_until_f = self.exe.submit(_wait_until_not_empty)
 
-        wait_until_f = exe.submit(_wait_until_not_empty)
-        IOLoop.current().add_future(wait_until_f, _maybe_im_not_empty)
+        IOLoop.current().add_future(wait_until_f, _nothing)
         return f
+
+    def wait_not_empty(self, timeout=None, tick=1.0, exclude=None):
+        start = time.time()
+        if exclude is None:
+            while self.empty():
+                if timeout is not None:
+                    if (time.time() - start) >= timeout:
+                        return False
+                time.sleep(tick)
+            return True
+        else:
+            while True:
+                if timeout is not None:
+                    if (time.time() - start) >= timeout:
+                        return False
+                if not self.empty():
+                    if len(self.keys().difference(exclude)) > 0:
+                        return True
+                time.sleep(tick)
