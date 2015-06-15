@@ -4,6 +4,16 @@
 History
 =======
 
+** 0.3 (2015-06-15) **
+
+* listen on UDP
+* LZ4 compression for RELP
+* drop permissions if possible
+* more shippers
+* packers
+* LMDB for inter-process communication
+* syslog agent (LMDB as persistent store)
+
 **0.1.3 (2015-03-23)**
 
 * refactored the configuration handling
