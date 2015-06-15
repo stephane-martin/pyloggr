@@ -198,13 +198,16 @@ def sanitize_tag(tag):
 
 
 def change_user(uid=None, gid=None):
+    security = logging.getLogger('security')
     try:
         if gid is not None:
             os.setregid(gid, gid)
+            security.info("Changed GID to %s", gid)
         if uid is not None:
             os.setreuid(uid, uid)
+            security.info("Changed UID to %s", uid)
     except OSError:
-        logging.getLogger('security').error("Impossible to change UID, GID to '%s', '%s'", uid, gid)
+        security.error("Impossible to change UID, GID to '%s', '%s'", uid, gid)
 
 
 def drop_capabilities(all=True):
@@ -218,7 +221,7 @@ def drop_capabilities(all=True):
         except ImportError:
             print("Warning: prctl module not found. Can't drop capabilities")
         else:
-            l = ["net_bind_service", "syslog"]
+            l = ['net_bind_service', 'syslog']
             if not all:
                 l.extend(['setuid', 'setgid'])
             l = ','.join(l)
@@ -229,6 +232,7 @@ def drop_capabilities(all=True):
             except ValueError:
                 print("Warning: exception occured while dropping capabilities")
             else:
+                print("Only keeping capabilities: " + ",".join(l))
                 return True
 
 
