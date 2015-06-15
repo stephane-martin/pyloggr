@@ -13,9 +13,37 @@ from base64 import b64decode
 from itertools import ifilter, imap
 
 from configobj import ConfigObj
+import certifi
+from future.builtins import str as real_unicode
+from future.builtins import bytes as real_bytes
 
 from pyloggr.utils import check_directory
 from pyloggr.utils.constants import FACILITY, SEVERITY
+from pwd import getpwnam
+from grp import getgrnam
+
+
+def _make_bool(b):
+    if isinstance(b, bool):
+        return b
+    elif isinstance(b, int):
+        return bool(b)
+    if isinstance(b, real_unicode) or isinstance(b, real_bytes):
+        b = b.lower().strip()
+        if b in ('false', 'no'):
+            return False
+        elif b in ('true', 'yes'):
+            return True
+        elif b == "none":
+            return None
+        elif b == '':
+            return None
+        else:
+            raise ValueError("Strange boolean value ?!")
+    if b is None:
+        return None
+
+    raise ValueError("Strange boolean value ?!")
 
 
 class GenericConfig(object):
@@ -105,28 +133,69 @@ class Shipper2SyslogConfig(GenericConfig):
     """
     Parameters for syslog shippers
     """
-    def __init__(self, host, port, source_queue, use_ssl=False, protocol="tcp", frmt="RFC5424", source_qos=500):
+    def __init__(self, host, port, source_queue, use_ssl=False, protocol="tcp", frmt="RFC5424", source_qos=500,
+                 verify=True, hostname='', ca_certs=None, client_cert=None, client_key=None):
+
         self.host = str(host)
         self.port = int(port)
         self.source_queue = str(source_queue)
-        self.use_ssl = bool(use_ssl) if use_ssl is not None else False
         self.protocol = str(protocol) if protocol else "tcp"
         self.frmt = str(frmt) if frmt else "RFC5424"
-        self.source_qos = int(source_qos)if source_qos is not None else 500
+        self.source_qos = int(source_qos) if source_qos is not None else 500
 
+        use_ssl = _make_bool(use_ssl)
+        verify = _make_bool(verify)
+        self.use_ssl = use_ssl if use_ssl is not None else False
+        self.verify = verify if verify is not None else True
 
-class RedisConfig(GenericConfig):
-    """
-    Redis connection parameters
-    """
-    def __init__(self, config_file="/etc/redis.conf", host="127.0.0.1", port=6379, password=None,
-                 try_spawn_redis=False, path=None):
-        self.config_file = str(config_file) if config_file else "/etc/redis.conf"
-        self.host = str(host) if host else "127.0.0.1"
-        self.port = int(port) if port else 6379
-        self.password = password if password else None
-        self.try_spawn_redis = bool(try_spawn_redis) if try_spawn_redis is not None else False
-        self.path = str(path) if path else None
+        self.hostname = str(hostname) if hostname else self.host
+        use_certifi = False
+        if ca_certs is None:
+            ca_certs = certifi.where()
+            use_certifi = True
+        elif ca_certs.lower() == "none" or ca_certs.lower() == "false":
+            ca_certs = certifi.where()
+            use_certifi = True
+        else:
+            ca_certs = abspath(expanduser(ca_certs))
+            if not exists(ca_certs):
+                raise ValueError("Shipper2SyslogConfig: ca_certs file '{}' does not exist".format(
+                    ca_certs
+                ))
+        self.ca_certs = ca_certs
+
+        if client_cert is not None:
+            if client_cert.lower() == "none" or client_cert.lower() == 'false' or client_cert == '':
+                client_cert = None
+            else:
+                client_cert = abspath(expanduser(client_cert))
+                if not exists(client_cert):
+                    raise ValueError("Shipper2SyslogConfig: client_cert file '{}' does not exist".format(
+                        client_cert
+                    ))
+        self.client_cert = client_cert
+
+        if client_key is not None:
+            if client_key.lower() == "none" or client_key.lower() == 'false' or client_key == '':
+                client_key = None
+            else:
+                client_key = abspath(expanduser(client_key))
+                if not exists(client_key):
+                    raise ValueError("Shipper2SyslogConfig: client_key file '{}' does not exist".format(
+                        client_key
+                    ))
+        self.client_key = client_key
+
+        if (client_key is None and client_cert is not None) or (client_key is not None and client_cert is None):
+            raise ValueError("client_key and client_cert should be both filled or both empty")
+
+        if self.use_ssl and (self.client_key is not None) and (not self.verify):
+            raise ValueError("Nonsense configuration: syslog client wants to use certificates, "
+                             "but does not check the server certificate's validity")
+
+        if self.use_ssl and self.verify and use_certifi:
+            print("Warning: Shipper2SyslogConfig: ca_certs is empty, that means that CA "
+                  "certificates from certifi will be used to verify the server certificate")
 
 
 class SSLConfig(GenericConfig):
@@ -177,7 +246,7 @@ class LoggingConfig(GenericConfig):
     """
     def __init__(self, level="DEBUG", **kwargs):
         for name in ['security', 'syslog', 'filtermachine', 'frontend', 'shipper2fs', 'shipper2pgsql', 'harvest',
-                     'collector', 'shipper2syslog']:
+                     'collector', 'shipper2syslog', 'agent']:
             self.__setattr__(name, str(kwargs.get(name, "~/logs/pyloggr.{}.log".format(name))))
         self.level = str(level) if level else "DEBUG"
 
@@ -186,7 +255,7 @@ class SyslogServerConfig(GenericConfig):
     """
     Parameters for syslog servers
     """
-    def __init__(self, name, ports=None, stype='tcp', localhost_only=False, socketname='', ssl=None,
+    def __init__(self, name, ports=None, stype='tcp', localhost_only=False, socket_names=None, ssl=None,
                  packer_groups=None):
         self.name = str(name)
         if ports is None:
@@ -195,11 +264,73 @@ class SyslogServerConfig(GenericConfig):
             self.ports = [int(p) for p in ports]
         else:
             self.ports = [int(ports)]
-        self.stype = str(stype) if stype else 'tcp'
-        self.localhost_only = bool(localhost_only) if localhost_only else False
+        self.stype = str(stype)
+        localhost_only = _make_bool(localhost_only)
+        self.localhost_only = localhost_only if localhost_only is not None else False
         self.ssl = SSLConfig.from_dict(ssl) if ssl else None
-        self.socketname = str(socketname) if socketname else ''
         self.packer_groups = packer_groups.split(',') if packer_groups else []
+        if not socket_names:
+            self.socket_names = []
+        elif isinstance(socket_names, list):
+            self.socket_names = [abspath(expanduser(str(socket_name))) for socket_name in socket_names]
+        else:
+            self.socket_names = [abspath(expanduser(str(socket_names)))]
+
+
+class SyslogAgentConfig(GenericConfig):
+    """
+    Parameters for the syslog agent
+    """
+    def __init__(self, host, port, tcp_ports=None, udp_ports=None, relp_ports=None, socket_names=None, pause=5,
+                 protocol="relp", frmt="RFC5424", tls=False, tls_hostname="", lmdb_db_name="~/lmdb/agent_queue",
+                 localhost_only=True, verify_server_cert=True, compress=False, server_deadline=120):
+        self.host = str(host)
+        self.port = int(port)
+
+        if not tcp_ports:
+            self.tcp_ports = []
+        elif isinstance(tcp_ports, list):
+            self.tcp_ports = [int(p) for p in tcp_ports]
+        else:
+            self.tcp_ports = [int(tcp_ports)]
+
+        if not udp_ports:
+            self.udp_ports = []
+        elif isinstance(udp_ports, list):
+            self.udp_ports = [int(p) for p in udp_ports]
+        else:
+            self.udp_ports = [int(udp_ports)]
+
+        if not relp_ports:
+            self.relp_ports = []
+        elif isinstance(relp_ports, list):
+            self.relp_ports = [int(p) for p in relp_ports]
+        else:
+            self.relp_ports = [int(relp_ports)]
+
+        if not socket_names:
+            self.socket_names = []
+        elif isinstance(socket_names, list):
+            self.socket_names = [abspath(expanduser(str(socket_name))) for socket_name in socket_names]
+        else:
+            self.socket_names = [abspath(expanduser(str(socket_names)))]
+
+        self.protocol = str(protocol).lower() if protocol else "relp"
+        self.frmt = str(frmt) if frmt else "RFC5424"
+        self.lmdb_db_name = lmdb_db_name
+        self.pause = int(pause) if pause else 5
+        self.tls_hostname = str(tls_hostname) if tls_hostname else None
+        self.server_deadline = int(server_deadline) if server_deadline is not None else 120
+
+        tls = _make_bool(tls)
+        localhost_only = _make_bool(localhost_only)
+        verify_server_cert = _make_bool(verify_server_cert)
+        compress = _make_bool(compress)
+
+        self.tls = tls if tls is not None else False
+        self.localhost_only = localhost_only if localhost_only is not None else True
+        self.verify_server_cert = verify_server_cert if verify_server_cert is not None else True
+        self.compress = compress if compress is not None else False
 
 
 class HarvestDirectory(GenericConfig):
@@ -210,7 +341,8 @@ class HarvestDirectory(GenericConfig):
                  severity=u'', source=u''):
         self.packer_group = str(packer_group) if packer_group else ''
         self.directory_name = str(directory_name)
-        self.recursive = bool(recursive) if recursive is not None else False
+        recursive = _make_bool(recursive)
+        self.recursive = recursive if recursive is not None else False
         if facility:
             if facility not in FACILITY.values():
                 raise ValueError("HARVEST configuration: invalid 'facility' value")
@@ -224,11 +356,10 @@ class HarvestDirectory(GenericConfig):
 
 
 def _config_file_to_dict(filename):
-    config = ConfigObj(
+    return ConfigObj(
         infile=filename, interpolation=False, encoding="utf-8", write_empty_values=True,
         raise_errors=True, file_error=True
-    )
-    return config.dict()
+    ).dict()
 
 
 class GlobalConfig(object):
@@ -238,14 +369,20 @@ class GlobalConfig(object):
 
     # noinspection PyUnusedLocal,PyPep8Naming
     def __init__(self, HMAC_KEY, RABBITMQ_HTTP, COOKIE_SECRET, MAX_WAIT_SECONDS_BEFORE_SHUTDOWN=10,
-                 PIDS_DIRECTORY='~/pids', RESCUE_QUEUE_DIRNAME="~/rescue", SLEEP_TIME=60, **kwargs):
+                 PIDS_DIRECTORY='~/pids', SLEEP_TIME=60, UID=None, GID=None, HTTP_PORT=8080,
+                 EXCHANGE_SPACE="~/lmdb/exchange", RESCUE_QUEUE_DIRNAME="~/lmdb/rescue",
+                 **kwargs):
+        self.UID = getpwnam(str(UID)).pw_uid if UID else None
+        self.GID = getgrnam(str(GID)).gr_gid if GID else None
         self.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN = int(MAX_WAIT_SECONDS_BEFORE_SHUTDOWN)
         self.HMAC_KEY = b64decode(HMAC_KEY)
-        self.PIDS_DIRECTORY = check_directory(PIDS_DIRECTORY)
+        self.PIDS_DIRECTORY = check_directory(PIDS_DIRECTORY, self.UID, self.GID)
         self.RABBITMQ_HTTP = RABBITMQ_HTTP
-        self.RESCUE_QUEUE_DIRNAME = check_directory(RESCUE_QUEUE_DIRNAME)
+        self.RESCUE_QUEUE_DIRNAME = check_directory(RESCUE_QUEUE_DIRNAME, self.UID, self.GID)
+        self.EXCHANGE_SPACE = check_directory(EXCHANGE_SPACE, self.UID, self.GID)
         self.COOKIE_SECRET = COOKIE_SECRET
         self.SLEEP_TIME = int(SLEEP_TIME)
+        self.HTTP_PORT = int(HTTP_PORT) if HTTP_PORT else 8080
 
     @classmethod
     def load(cls, config_dirname):
@@ -253,27 +390,22 @@ class GlobalConfig(object):
         :param config_dirname: configuration directory path
         :rtype: GlobalConfig
         """
-        config_dirname = check_directory(config_dirname)
+        config_dirname = check_directory(config_dirname, create=False)
         main_config_filename = join(config_dirname, 'pyloggr_config')
         d = _config_file_to_dict(main_config_filename)
         c = cls(**d)
         c.CONFIG_DIR = config_dirname
         c.NOTIFICATIONS = PublisherConfig.from_dict(d['NOTIFICATIONS'])
-        c._load_redis_conf()
         c._load_rabbitmq_conf()
         c._load_shipper2pgsql_conf()
         c._load_shipper2fs_conf()
         c._load_logging_conf()
         c._load_harvest_conf()
         c._load_syslog_servers_conf()
+        c._load_syslog_agent_conf()
         c._load_machines_conf()
         c._load_shipper2syslog_conf()
         return c
-
-    def _load_redis_conf(self):
-        redis_config_filename = join(self.CONFIG_DIR, 'redis.conf')
-        d = _config_file_to_dict(redis_config_filename)
-        self.REDIS = RedisConfig.from_dict(d)
 
     def _load_rabbitmq_conf(self):
         rabbitmq_config_filename = join(self.CONFIG_DIR, 'rabbitmq.conf')
@@ -290,7 +422,7 @@ class GlobalConfig(object):
         d = _config_file_to_dict(fs_config_filename)
         self.SHIPPER2FS = {shipper: Shipper2FSConfig.from_dict(d[shipper]) for shipper in d}
         for shipper in self.SHIPPER2FS.values():
-            shipper.directory = check_directory(shipper.directory)
+            shipper.directory = check_directory(shipper.directory, self.UID, self.GID)
 
     def _load_logging_conf(self):
         logging_config_filename = join(self.CONFIG_DIR, 'logging.conf')
@@ -302,7 +434,7 @@ class GlobalConfig(object):
         harvest_conf_filename = join(self.CONFIG_DIR, 'harvest.conf')
         d = _config_file_to_dict(harvest_conf_filename)
         for (directory_name, options) in d.items():
-            directory_name = check_directory(directory_name)
+            directory_name = check_directory(directory_name, self.UID, self.GID)
             options['directory_name'] = directory_name
             self.HARVEST[directory_name] = HarvestDirectory.from_dict(options)
 
@@ -316,6 +448,12 @@ class GlobalConfig(object):
         for server_name in server_names:
             d[server_name]['name'] = server_name
             self.SYSLOG[server_name] = SyslogServerConfig.from_dict(d[server_name])
+
+    def _load_syslog_agent_conf(self):
+        syslog_agent_conf_filename = join(self.CONFIG_DIR, 'syslog_agent.conf')
+        d = _config_file_to_dict(syslog_agent_conf_filename)
+        self.SYSLOG_AGENT = SyslogAgentConfig.from_dict(d)
+        self.SYSLOG_AGENT.lmdb_db_name = check_directory(self.SYSLOG_AGENT.lmdb_db_name, self.UID, self.GID)
 
     def _load_machines_conf(self):
         syslog_servers_conf_filename = join(self.CONFIG_DIR, 'machines.conf')
@@ -392,8 +530,8 @@ def set_logging(filename, level="DEBUG"):
 
     filename = abspath(expanduser(filename))
     security_filename = abspath(expanduser(Config.LOGGING_FILES.security))
-    check_directory(dirname(filename))
-    check_directory(dirname(security_filename))
+    check_directory(dirname(filename), Config.UID, Config.GID)
+    check_directory(dirname(security_filename), Config.UID, Config.GID)
 
     logging_config_dict['handlers']['tofile']['filename'] = filename
     logging_config_dict['handlers']['security_handler']['filename'] = security_filename
@@ -416,18 +554,14 @@ def set_configuration(configuration_directory):
     :return:
     """
     config_obj = GlobalConfig.load(configuration_directory)
+
     # copy configuration to Config object
     attrs = ifilter(lambda attr: attr.isupper(), vars(config_obj))
     list(imap(lambda attr: setattr(Config, attr, config_obj.__getattribute__(attr)), attrs))
 
-    # set HMAC key so that Event can compute hmacs
-    from pyloggr.event import Event
-    # noinspection PyUnresolvedReferences
-    Event.HMAC_KEY = Config.HMAC_KEY
-
     # read packers_config and inject it in Config.SYSLOG.servers and Config.HARVEST.directories
-    from pyloggr.packers.build_packers_config import parse_config_file
-    packers_config = parse_config_file(join(configuration_directory, 'packers_config'))
+    from pyloggr.packers.build_packers_config import parse_config_file as parse_packer_config_file
+    packers_config = parse_packer_config_file(join(configuration_directory, 'packers_config'))
     # in Config.SYSLOG.servers ...
     syslog_servers_with_packers = [server for server in Config.SYSLOG.values() if server.packer_groups]
     for syslog_server in syslog_servers_with_packers:
