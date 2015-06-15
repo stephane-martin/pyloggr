@@ -6,7 +6,6 @@ Packers are used to merge several events onto one single event.
 
 __author__ = 'stef'
 
-import logging
 from copy import copy
 from math import fabs
 
@@ -17,8 +16,6 @@ from arrow import Arrow
 from sortedcontainers import SortedSet
 
 from pyloggr.utils.constants import SEVERITY, SEVERITY_TO_INT
-
-logger = logging.getLogger(__name__)
 
 
 def merge_events(list_of_events):
@@ -118,6 +115,12 @@ class BasePacker(object):
         self.periodic.start()
 
     def publish_event(self, event, routing_key):
+        """
+        Publish event. Override in concrete packers.
+
+        :param event: event to publish
+        :param routing_key: publication routing key
+        """
         raise NotImplementedError
 
     def shutdown(self):
