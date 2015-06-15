@@ -45,3 +45,6 @@ cytoolz
 unidecode
 msgpack-python
 elasticsearch
+lmdb
+setproctitle
+lz4
