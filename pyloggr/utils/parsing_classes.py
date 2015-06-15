@@ -292,6 +292,18 @@ class Condition(object):
         return self.fun(ev)
 
 
+class AlwaysTrueCondition(Condition):
+    def __init__(self):
+        super(AlwaysTrueCondition, self).__init__()
+        self.fun = lambda ev: True
+
+    def apply(self, ev):
+        return True
+
+
+always_true_singleton = AlwaysTrueCondition()
+
+
 class NotCondition(Condition):
     """
     NOT A condition
