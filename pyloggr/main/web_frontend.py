@@ -1,4 +1,9 @@
 # encoding: utf-8
+"""
+Pyloggr Web interface
+"""
+from __future__ import absolute_import, division, print_function
+
 __author__ = 'stef'
 
 # todo: metrics
@@ -9,7 +14,6 @@ from pkg_resources import resource_filename
 from tornado.web import RequestHandler, Application, url
 from tornado.websocket import WebSocketHandler
 from tornado.httpserver import HTTPServer
-from tornado.netutil import bind_sockets
 from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import PeriodicCallback, IOLoop
 from jinja2 import Environment, PackageLoader
@@ -23,7 +27,7 @@ from pyloggr.rabbitmq.notifications_consumer import NotificationsConsumer
 from pyloggr.rabbitmq import RabbitMQConnectionError
 from pyloggr.utils.observable import Observable, Observer
 from pyloggr.config import Config
-from pyloggr.cache import cache
+from pyloggr.cache import Cache
 from pyloggr.utils import sleep
 
 logger = logging.getLogger(__name__)
@@ -42,9 +46,6 @@ class SyslogServers(Observable, Observer):
         self.servers = dict()
         # get initial data from Redis
 
-        if not cache.available:
-            self.servers = {}
-
         self.servers = {syslog_server.server_id: {
             'id': syslog_server.server_id,
             'ports': syslog_server.ports,
@@ -54,7 +55,7 @@ class SyslogServers(Observable, Observer):
                 'client_port': client['client_port'],
                 'server_port': client['server_port']
             } for client in syslog_server.clients}
-        } for syslog_server in cache.syslog_list.values()}
+        } for syslog_server in Cache.syslog_list.values()}
 
     def notified(self, d):
         # get updates from rabbitmq
@@ -316,11 +317,11 @@ class WebServer(object):
     """
     Pyloggr process for the web frontend part
     """
-    def __init__(self):
+    def __init__(self, sockets):
         self.app = PyloggrApplication('/syslog')
         self.http_server = HTTPServer(self.app)
-        self.sockets = bind_sockets(8888)
         self._periodic = None
+        self.sockets = sockets
 
     @coroutine
     def launch(self):
@@ -354,9 +355,13 @@ class WebServer(object):
 
     @coroutine
     def shutdown(self):
+        logger.debug("Dropping HTTP clients")
         yield self.http_server.close_all_connections()
+        logger.debug("Stopping stats refresh")
         self.stop_periodic()
+        logger.debug("Asking the notification consumer to stop")
         yield notifications_consumer.stop()
+        logger.debug("Stopping the HTTP server")
         self.http_server.stop()
 
     def start_periodic(self):
@@ -376,7 +381,7 @@ class WebServer(object):
     def update_stats(self):
         yield rabbitmq_stats.update()
         yield pgsql_stats.update()
-        status.redis = cache.available
+        status.redis = True
 
 # todo: perform init in Webserver instead
 
