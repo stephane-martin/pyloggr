@@ -168,7 +168,7 @@ class PostgresqlShipper(object):
             events = SortedSet()
             for rabbit_message in rabbitmq_messages:
                 try:
-                    ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True, json=True)
+                    ev = Event.parse_bytes_to_event(rabbit_message.body, hmac=True)
                 except ParsingError:
                     # should not happen, messages are coming from pyloggr
                     logger.info("shipper: dropping one unparsable message")
@@ -203,6 +203,7 @@ class PostgresqlShipper(object):
                     self.db_pool.putconn(conn)
 
         executor = ThreadPoolExecutor(max_workers=1)
+        # noinspection PyBroadException
         try:
             yield executor.submit(
                 _flush_backthread, rabbitmq_messages=msgs, tablename=self.pgsql_config.tablename
