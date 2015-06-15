@@ -129,7 +129,7 @@ class FilesystemShipper(object):
         :type message: RabbitMQMessage
         """
         try:
-            event = Event.parse_bytes_to_event(message.body, json=True, hmac=True)
+            event = Event.parse_bytes_to_event(message.body, hmac=True)
         except ParsingError:
             logger.info("shipper2fs: dropping one unparsable message")
             message.ack()
