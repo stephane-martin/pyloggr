@@ -11,7 +11,6 @@ from math import fabs
 from tornado.gen import coroutine, Return
 from tornado.ioloop import IOLoop
 from spooky_hash import Hash128
-from arrow import Arrow
 
 
 from . import BasePacker, PackerQueue
