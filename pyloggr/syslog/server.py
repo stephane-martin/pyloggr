@@ -11,23 +11,46 @@ import ssl
 import socket
 import errno
 from itertools import chain
-from os.path import expanduser
 import uuid
 import threading
+import os
+from io import BytesIO
+from functools import partial
 
 import certifi
+import lz4
 # noinspection PyCompatibility,PyPackageRequirements
 from future.builtins import str as real_unicode
 from future.builtins import bytes as real_bytes
 from tornado.iostream import SSLIOStream, StreamClosedError
 from tornado.tcpserver import TCPServer
 from tornado.gen import coroutine, Return
-from tornado.netutil import errno_from_exception, bind_sockets, bind_unix_socket
+from tornado.netutil import errno_from_exception, bind_sockets
 
 from pyloggr.utils.constants import CIPHERS
+from pyloggr.utils import read_next_token_in_stream
+from pyloggr.syslog.udpserver import bind_udp_unix_socket, UDPServer, bind_udp_sockets
+from pyloggr.config import SyslogServerConfig
 
-logger = logging.getLogger(__name__)
-security_logger = logging.getLogger('security')
+
+def parse_bytes_stream(stream):
+    next_token = read_next_token_in_stream(stream)
+    messages = []
+    relp_id = None
+    try:
+        while True:
+            try:
+                relp_id = next_token.next()
+            except StopIteration:
+                break
+            relp_id = int(relp_id)
+            _ = next_token.next()
+            length = int(next_token.next())
+            data = stream.read(length)
+            messages.append(data)
+    except (ValueError, StopIteration):
+        raise ValueError("Invalid stream")
+    return relp_id, messages
 
 
 def wrap_ssl_sock(sock, ssl_options):
@@ -47,6 +70,7 @@ def wrap_ssl_sock(sock, ssl_options):
             if ssl_options.ca_certs:
                 context.load_verify_locations(ssl_options.ca_certs)
             else:
+                security_logger = logging.getLogger('security')
                 security_logger.info("Using certifi store to verify clients certs")
                 context.load_verify_locations(certifi.where())
                 # context.load_default_certs(ssl.Purpose.CLIENT_AUTH)
@@ -73,6 +97,7 @@ def wrap_ssl_sock(sock, ssl_options):
             if ssl_options.ca_certs:
                 ca_certs = ssl_options.ca_certs
             else:
+                security_logger = logging.getLogger('security')
                 security_logger.info("Using certifi store to verify clients certs")
                 ca_certs = certifi.where()
 
@@ -90,7 +115,7 @@ def wrap_ssl_sock(sock, ssl_options):
         )
 
 
-class BaseSyslogServer(TCPServer):
+class BaseSyslogServer(TCPServer, UDPServer):
     """
     Basic Syslog/RELP server
     """
@@ -130,7 +155,15 @@ class BaseSyslogServer(TCPServer):
         """
         if not self.listening:
             self.listening = True
-            self.add_sockets(self.syslog_parameters.list_of_sockets)
+            self.add_sockets(self.syslog_parameters.list_of_tcp_sockets)
+            self.add_udp_sockets(self.syslog_parameters.list_of_udp_sockets)
+            self.add_udp_sockets(self.syslog_parameters.list_of_unix_sockets)
+
+    def handle_data(self, data, sockname, peername):
+        """
+        Inherit to handle UDP data
+        """
+        raise NotImplementedError
 
     @coroutine
     def handle_stream(self, stream, address):
@@ -157,8 +190,7 @@ class BaseSyslogServer(TCPServer):
         self.list_of_clients.remove(connection)
 
     def _stop_listen_sockets(self):
-        for fd, sock in self._sockets.items():
-            self.io_loop.remove_handler(fd)
+        [self.io_loop.remove_handler(fd) for fd in self._sockets]
 
     @coroutine
     def _stop_syslog(self):
@@ -171,10 +203,10 @@ class BaseSyslogServer(TCPServer):
         Tornado coroutine
         """
         if self.listening:
+            logger = logging.getLogger(__name__)
             self.listening = False
             logger.info("Closing RELP clients connections")
-            for client in self.list_of_clients:
-                client.disconnect()
+            [client.disconnect() for client in self.list_of_clients]
             logger.info("Stopping the RELP server")
             # instead of calling self.stop(): we don't want to close the sockets
             self._stop_listen_sockets()
@@ -183,7 +215,7 @@ class BaseSyslogServer(TCPServer):
     def stop_all(self):
         """
         stop_all()
-        Stops completely the server. Stop listening for syslog clients. Close connection to RabbitMQ.
+        Stops completely the server.
 
         Note
         ====
@@ -227,6 +259,7 @@ class BaseSyslogServer(TCPServer):
             else:
                 raise
         except IOError:
+            logger = logging.getLogger(__name__)
             logger.error("IOError happened when client connected with TLS. Check the SSL configuration")
             return connection.close()
 
@@ -239,6 +272,7 @@ class BaseSyslogServer(TCPServer):
             )
             self.handle_stream(stream, address)
         except Exception:
+            logger = logging.getLogger(__name__)
             logger.error("Error in connection callback", exc_info=True)
             raise
 
@@ -248,24 +282,27 @@ class SyslogParameters(object):
     Encapsulates the syslog configuration
     """
     def __init__(self, conf):
-        """
-        :type conf: pyloggr.config.SyslogConfig
-        """
 
         # todo: simplify the mess
         self.conf = conf
-        self.list_of_sockets = None
+        self.list_of_tcp_sockets = None
+        self.list_of_unix_sockets = None
+        self.list_of_udp_sockets = None
         self.port_to_protocol = {}
         self.unix_socket_names = []
         self.port_to_ssl_config = {}
 
         for server in conf.values():
+            assert(isinstance(server, SyslogServerConfig))
             if server.stype == 'unix':
-                self.unix_socket_names.append(server.socketname)
-                self.port_to_protocol[server.socketname] = 'socket'
+                self.unix_socket_names.extend(server.socket_names)
+                for socket_name in server.socket_names:
+                    self.port_to_protocol[socket_name] = 'socket'
             else:
                 for port in server.ports:
-                    self.port_to_protocol[port] = server.stype
+                    # we don't need to track UDP ports
+                    if server.stype in ('relp', 'tcp'):
+                        self.port_to_protocol[port] = server.stype
 
         self.ssl_ports = list(
             chain.from_iterable([server.ports for server in conf.values() if server.ssl is not None])
@@ -273,6 +310,17 @@ class SyslogParameters(object):
 
         for port in self.ssl_ports:
             self.port_to_ssl_config[port] = [server.ssl for server in conf.values() if port in server.ports][0]
+
+    def delete_unix_sockets(self):
+        """
+        Try to delete unix sockets files. Ignore any error and log them as warnings.
+        """
+        for path in self.unix_socket_names:
+            try:
+                os.remove(path)
+            except OSError:
+                logger = logging.getLogger(__name__)
+                logger.warning("Can't delete unix socket '%s'", path)
 
     def bind_all_sockets(self):
         """
@@ -282,23 +330,34 @@ class SyslogParameters(object):
         :rtype: list
         """
 
-        list_of_sockets = list()
+        self.list_of_tcp_sockets = list()
+        self.list_of_udp_sockets = list()
         for server in self.conf.values():
             address = '127.0.0.1' if server.localhost_only else ''
-            for port in server.ports:
-                list_of_sockets.append(
-                    bind_sockets(port, address)
-                )
+            [
+                self.list_of_tcp_sockets.extend(bind_sockets(port, address))
+                for port in server.ports
+                if server.stype in ('tcp', 'relp') and server.ports
+            ]
+            [
+                self.list_of_udp_sockets.extend(bind_udp_sockets(port, address))
+                for port in server.ports
+                if server.stype == 'udp' and server.ports
+            ]
 
-        if self.unix_socket_names:
-            list_of_sockets.append(
-                [bind_unix_socket(expanduser(sock), mode=0o666) for sock in self.unix_socket_names]
-            )
-
-        self.list_of_sockets = list(chain.from_iterable(list_of_sockets))
-        logger.info("Pyloggr syslog will listen on: {}".format(','.join(str(x) for x in self.port_to_protocol.keys())))
+        old_umask = os.umask(0o000)
+        try:
+            self.list_of_unix_sockets = [
+                bind_udp_unix_socket(sock, mode=0o777)
+                for sock in self.unix_socket_names
+            ]
+        finally:
+            os.umask(old_umask)
+        logger = logging.getLogger(__name__)
+        logger.info("Pyloggr syslog will listen on: {}".format(
+            ','.join(str(x) for x in self.port_to_protocol.keys()))
+        )
         logger.info("SSL ports: {}".format(','.join(str(x) for x in self.ssl_ports)))
-        return self.list_of_sockets
 
 
 class BaseSyslogClientConnection(object):
@@ -338,7 +397,7 @@ class BaseSyslogClientConnection(object):
         self.disconnecting = threading.Event()
 
     @coroutine
-    def _read_next_token(self):
+    def _read_next_tokens(self, nb_tokens=1):
         """
         _read_next_token()
         Reads the stream until we get a space delimiter
@@ -348,14 +407,15 @@ class BaseSyslogClientConnection(object):
         Tornado coroutine
         """
         # todo: perf optimisation ?
-        token = ''
         stream = self.stream
-        while True:
-            token = yield stream.read_until_regex(r'\s')
-            token = token.strip(' \r\n')
-            if token:
-                break
-        raise Return(token)
+        tokens = []
+        while len(tokens) < nb_tokens:
+            token = ''
+            while len(token) == 0:
+                token = yield stream.read_until_regex(r'\s')
+                token = token.strip(' \r\n')
+            tokens.append(token)
+        raise Return(tokens)
 
     def on_stream_closed(self):
         """
@@ -363,7 +423,10 @@ class BaseSyslogClientConnection(object):
         Called when a client has been disconnected
         """
         self.disconnecting.set()
-        logger.info("Syslog client has been disconnected {}:{}".format(self.client_host, self.client_port))
+        logger = logging.getLogger(__name__)
+        logger.info("Syslog client has been disconnected {}:{}".format(
+            self.client_host, self.client_port
+        ))
 
     def disconnect(self):
         """
@@ -401,10 +464,12 @@ class BaseSyslogClientConnection(object):
             HUAMANMSG = *OCTET ; a human-readble message without LF in it
             CMDDATA = *OCTET ; semantics depend on original command
         """
-        read_next_token = self._read_next_token
+        logger = logging.getLogger(__name__)
+        security_logger = logging.getLogger('security')
+        read_next_tokens = self._read_next_tokens
         try:
             while not self.disconnecting.is_set():
-                relp_event_id = yield self._read_next_token()
+                relp_event_id = (yield read_next_tokens(1))[0]
                 try:
                     relp_event_id = int(relp_event_id)
                 except ValueError:
@@ -412,12 +477,12 @@ class BaseSyslogClientConnection(object):
                     log_msg = "Relp ID ({}) was not an integer. We disconnect the RELP client {}:{}".format(
                         relp_event_id, self.client_host, self.client_port
                     )
+
                     logger.warning(log_msg)
                     security_logger.warning(log_msg)
                     self.disconnect()
                     break
-                command = yield read_next_token()
-                length = yield read_next_token()
+                command, length = yield read_next_tokens(2)
                 try:
                     length = int(length)
                 except ValueError:
@@ -432,7 +497,6 @@ class BaseSyslogClientConnection(object):
                 data = b''
                 if length > 0:
                     data = yield self.stream.read_bytes(length)
-                    data = data.strip(b' \r\n')
 
                 self._process_relp_command(relp_event_id, command, data)
 
@@ -476,11 +540,13 @@ class BaseSyslogClientConnection(object):
             APP-DEFINED = 1*2OCTET
             SYSLOG-MSG is defined in the syslog protocol [RFC5424] and may also be considered to be the payload in [RFC3164]
         """
-        read_next_token = self._read_next_token
+        read_next_tokens = self._read_next_tokens
         stream = self.stream
+        logger = logging.getLogger(__name__)
+        security_logger = logging.getLogger('security')
         try:
             while not self.disconnecting.is_set():
-                first_token = yield read_next_token()
+                first_token = (yield read_next_tokens(1))[0]
                 if first_token[0] == b'<':
                     # non-transparent framing
                     rest_of_line = yield stream.read_until(b'\n')
@@ -517,14 +583,39 @@ class BaseSyslogClientConnection(object):
         :param command: the RELP command
         :param data: data transmitted after command (can be empty)
         """
+        logger = logging.getLogger(__name__)
+        security_logger = logging.getLogger('security')
         if command == 'open':
+            data = data.strip(b' \r\n')
             answer = '{} rsp {} 200 OK\n{}\n'.format(relp_event_id, len(data) + 7, data)
             self.stream.write(answer)
         elif command == 'close':
             self.stream.write('{} rsp 0\n0 serverclose 0\n'.format(relp_event_id))
             self.disconnect()
         elif command == 'syslog':
-            self._process_event(data.strip(b'\r\n '), 'relp', relp_event_id)
+            data = data.strip(b' \r\n')
+            self._process_event(data, 'relp', relp_event_id)
+        elif command == 'lz4':
+            try:
+                buf = BytesIO(lz4.decompress(data))
+            except ValueError:
+                logger.error("Dropping compressed stream: invalid compressed data")
+                self.disconnect()
+                return
+            finally:
+                del data
+            try:
+                parsed_relp_id, messages = parse_bytes_stream(buf)
+            except ValueError:
+                # malformed stream
+                logger.error("Dropping compressed stream: invalid RELP data")
+                self.disconnect()
+                return
+            finally:
+                buf.close()
+                del buf
+            self._process_group_events(messages, relp_event_id)
+
         else:
             log_msg = "Unknown command '{}' from {}:{}".format(command, self.client_host, self.client_port)
             security_logger.warning(log_msg)
@@ -534,7 +625,11 @@ class BaseSyslogClientConnection(object):
     def _process_event(self, bytes_event, protocol, relp_event_id=None):
         raise NotImplementedError
 
+    def _process_group_events(self, bytes_events, relp_event_id):
+        raise NotImplementedError
+
     def _set_socket(self):
+        logger = logging.getLogger(__name__)
         try:
             server_sockname = self.stream.socket.getsockname()
             if isinstance(server_sockname, real_bytes) or isinstance(server_sockname, real_unicode):
@@ -569,7 +664,7 @@ class BaseSyslogClientConnection(object):
         ====
         Tornado coroutine
         """
-
+        logger = logging.getLogger(__name__)
         try:
             self._set_socket()
         except (StreamClosedError, ValueError):
@@ -583,7 +678,7 @@ class BaseSyslogClientConnection(object):
 
         dispatch_function = self.dispatch_dict.get(t, None)
         if dispatch_function is None:
-            logger.warning("on_connect: no dispatch function")
+            logger.warning("on_connect: no dispatch function for '%s'", t)
             self.disconnect()
             return
 
