@@ -7,7 +7,6 @@ Pyparsing stuff to parse `packers_config`
 __author__ = 'stef'
 
 from collections import namedtuple
-import logging
 from functools import partial
 
 
@@ -18,11 +17,9 @@ from future.utils import raise_from
 from pyloggr.utils import to_unicode
 from pyloggr.utils.parsing_classes import label, open_delim, close_delim, kw_arg_assign, my_qs, if_cond
 from pyloggr.utils.parsing_classes import condition, comment_line, integer, Constant
+from pyloggr.utils.parsing_classes import AlwaysTrueCondition
 from pyloggr.packers.merge_by_format import PackerByFormat
 from pyloggr.packers.merge_by_time import PackerByTime
-
-
-logger = logging.getLogger(__name__)
 
 
 packers_implementation = {
@@ -61,7 +58,7 @@ PackerGroup = namedtuple("PackerGroup", ['name', 'condition', 'packers'])
 def make_packer_group_without(toks):
     name = toks[0]
     packers = list(toks[1])
-    return PackerGroup(name=name, packers=packers, condition=None)
+    return PackerGroup(name=name, packers=packers, condition=AlwaysTrueCondition())
 
 
 def make_packer_group_with(toks):
@@ -112,7 +109,6 @@ def _parse_string(s):
     try:
         return packers_config_parser.parseString(s, parseAll=True)[0]
     except ParseException as ex:
-        logging.exception(ex)
         raise_from(ValueError("Syntax Error in packers configuration"), ex)
 
 
