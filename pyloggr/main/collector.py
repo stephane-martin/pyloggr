@@ -6,12 +6,16 @@ Collect events from the rescue queue and try to forward them to RabbitMQ
 __author__ = 'stef'
 
 import logging
+
+# noinspection PyCompatibility
+from concurrent.futures import ThreadPoolExecutor
 from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import IOLoop, PeriodicCallback
 from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
-from pyloggr.cache import cache
 from pyloggr.config import Config
+from pyloggr.event import Event
 from pyloggr.utils import sleep
+from pyloggr.utils.lmdb_wrapper import LmdbWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,9 @@ class EventCollector(object):
 
     @coroutine
     def launch(self):
+        LmdbWrapper(Config.RESCUE_QUEUE_DIRNAME, size=52428800).open(
+            sync=True, metasync=True, max_dbs=2
+        )
         self._publisher = Publisher(self._rabbitmq_config)
         try:
             rabbit_close_ev = yield self._publisher.start()
@@ -58,6 +65,7 @@ class EventCollector(object):
     def shutdown(self):
         self._shutting_down = True
         yield self.stop()
+        LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME).close()
 
     def _start_periodic(self):
         """
@@ -91,25 +99,49 @@ class EventCollector(object):
         """
         if self._collecting:
             return
-        self._collecting = True
-
-        nb_events = len(cache.rescue)
-
         if self._publisher is None:
             logger.info("Rescue queue: no connection to RabbitMQ")
-            self._collecting = False
             return
 
-        logger.info("{} elements in the rescue queue".format(nb_events))
-        if nb_events == 0:
+        self._collecting = True
+
+        def _get_elements_from_lmdb_thread():
+            lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+            queue = lmdb.queue('pyloggr.rescue')
+
+            nb_events = len(queue)
+            logger.info("{} elements in the rescue queue".format(nb_events))
+
+            if nb_events == 0:
+                return None
+
+            return queue.pop_all()
+
+        with ThreadPoolExecutor(1) as exe:
+            dict_events = yield exe.submit(_get_elements_from_lmdb_thread)
+        if not dict_events:
             self._collecting = False
             return
-
+        # parse events
+        events = (
+            Event.parse_bytes_to_event(dict_event, hmac=True, swallow_exceptions=True)
+            for dict_event in dict_events
+        )
+        # wipe None values
+        events = (event for event in events if event)
         publish_futures = [
-            self._publisher.publish_event(event, 'pyloggr.syslog.collector') for event in cache.rescue.event_generator()
+            self._publisher.publish_event(event, 'pyloggr.syslog.collector')
+            for event in events
         ]
         results = yield publish_futures
-        failed_events = [event for (ack, event) in results if not ack]
-        map(cache.rescue.append, failed_events)
+        failed_events = (event for (ack, event) in results if not ack)
 
+        # put back events in lmdb if necessary
+        def _put_back_events_in_lmdb_thread(evts):
+            lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+            queue = lmdb.queue('pyloggr.rescue')
+            queue.extend(evts)
+
+        with ThreadPoolExecutor(1) as exe:
+            yield exe.submit(_put_back_events_in_lmdb_thread, failed_events)
         self._collecting = False
