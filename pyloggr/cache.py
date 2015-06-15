@@ -51,7 +51,7 @@ class SyslogCache(object):
 
     def __init__(self, server_id):
         self.server_id = server_id
-        self.hash_name = syslog_key + '_' + str(server_id)
+        self.hash_name = syslog_key + '.' + str(server_id)
 
     @property
     def status(self):
@@ -60,7 +60,7 @@ class SyslogCache(object):
 
         :returns: Boolean or None (if Redis not available)
         """
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         return lmdb.hash(self.hash_name)['status'] == "True"
 
     @status.setter
@@ -71,7 +71,7 @@ class SyslogCache(object):
         :param new_status: True (running) or False (stopped)
         :type new_status: bool
         """
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         if new_status:
             lmdb.set(syslog_key).add(self.server_id)
         else:
@@ -89,7 +89,7 @@ class SyslogCache(object):
         """
         if not self.status:
             return []
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         clients = lmdb.hash(self.hash_name)['clients']
         clients = clients if clients else []
         if clients:
@@ -106,7 +106,7 @@ class SyslogCache(object):
         :type new_clients: list of :py:class:`pyloggr.main.syslog_server.SyslogClientConnection`
         """
         if self.status:
-            lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+            lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
             if hasattr(new_clients, 'values'):
                 lmdb.hash(self.hash_name)['clients'] = [client.props for client in new_clients.values()]
             else:
@@ -122,7 +122,7 @@ class SyslogCache(object):
         """
         if not self.status:
             return []
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         ports = lmdb.hash(self.hash_name)['ports']
         return ports if ports else []
 
@@ -135,7 +135,7 @@ class SyslogCache(object):
         :type ports: list
         """
         if self.status:
-            lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+            lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
             lmdb.hash(self.hash_name)['ports'] = ports
 
 
@@ -166,7 +166,7 @@ class SyslogServerList(object):
 
         :param server_id: process id
         """
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         hash_name = syslog_key + '_' + str(server_id)
         lmdb.set(syslog_key).remove(server_id)
         # self.redis_conn.delete(hash_name)
@@ -178,12 +178,12 @@ class SyslogServerList(object):
         :returns: how many syslog processes, or None (Redis not available)
         :rtype: int
         """
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         return len(lmdb.set(syslog_key))
 
     # noinspection PyDocstring
     def keys(self):
-        lmdb = LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
+        lmdb = LmdbWrapper.get_instance(Config.EXCHANGE_SPACE)
         keys = list(int(key) for key in lmdb.set(syslog_key).members())
         keys.sort()
         return keys
@@ -221,10 +221,12 @@ class Cache(object):
 
         :raise CacheError: when redis initialization fails
         """
-        LmdbWrapper.get_instance(Config.RESCUE_QUEUE_DIRNAME)
         cls.syslog_list = SyslogServerList()
+        LmdbWrapper(Config.EXCHANGE_SPACE, size=52428800).open(
+            sync=False, metasync=False, max_dbs=0
+        )
 
     @classmethod
     def shutdown(cls):
-        LmdbWrapper.close_all()
+        LmdbWrapper.get_instance(Config.EXCHANGE_SPACE).close()
 
