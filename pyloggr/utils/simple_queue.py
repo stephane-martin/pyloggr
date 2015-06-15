@@ -19,7 +19,7 @@ from tornado.concurrent import Future
 
 class ThreadSafeQueue(object):
     """
-    Simplified thread-safe queue, without size limit
+    Simplified thread-safe/coroutine queue, without size limit
     """
 
     def __init__(self):
@@ -30,6 +30,8 @@ class ThreadSafeQueue(object):
     def put(self, item):
         """
         Put an item on the queue
+
+        :param item: item
         """
         with self.lock:
             # remove waiters that have expired
@@ -44,6 +46,8 @@ class ThreadSafeQueue(object):
     def get_wait(self, deadline=None):
         """
         Wait for an available item and pop it from the queue
+
+        :param deadline: optional deadline
         """
         f = RealFuture()
 
@@ -164,6 +168,9 @@ class SimpleToroQueue(object):
 
 
 def TimeoutTask(func, deadline=None, *args, **kwargs):
+    """
+    Encapsulate a Tornado Task with a deadline
+    """
     f = Future()
 
     def _expired():
