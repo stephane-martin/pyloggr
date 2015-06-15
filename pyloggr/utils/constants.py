@@ -240,10 +240,12 @@ SEVERITY_TO_INT = {
 
 
 SQL_COLUMNS = [
-    u"procid", u"severity", u"facility", u"app_name", u"source", u"programname", u"syslogtag", u"uuid",
-    u"timereported", u"timegenerated", u"timehmac", u"message", u"hmac", u'structured_data'
+    u"procid", u"severity", u"facility", u"app_name", u"source", u"uuid",
+    u"timereported", u"timegenerated", u"message", u'structured_data'
 ]
+
 SQL_COLUMNS_STR = u','.join(SQL_COLUMNS)
+
 SQL_VALUES_STR = \
     u'(' \
     + u','.join(
@@ -251,9 +253,9 @@ SQL_VALUES_STR = \
     ) \
     + u')'
 
-D_COLUMNS = u'd.procid::int, d.severity, d.facility, d.app_name, d.source, d.programname, d.syslogtag, d.uuid,' \
-            u'd.timereported::timestamptz, d.timegenerated::timestamptz, d.timehmac::timestamptz, d.message, d.hmac,' \
-            u'd.structured_data::jsonb'
+D_COLUMNS = u'd.procid::int, d.severity, d.facility, d.app_name, d.source, d.uuid,' \
+            u'd.timereported::timestamptz, d.timegenerated::timestamptz,' \
+            u'd.message, d.structured_data::jsonb'
 
 # if we already have an event with same UUID in database, that's a duplicate, and we skip the insert
 SQL_INSERT_QUERY = u"""WITH data({}) AS (
