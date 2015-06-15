@@ -1,9 +1,7 @@
 # encoding: utf-8
 
 """
-Pyparsing parser for rfc5424 structured data
-
-Credit: https://bitbucket.org/evax/loggerglue
+Parser for rfc5424 structured data and wrapper classes
 """
 
 import logging
@@ -100,6 +98,12 @@ class StructuredDataNamesValues(dict):
         return super(StructuredDataNamesValues, self).__getitem__(san)
 
     def add(self, key, values):
+        """
+        Add values to the 'key' set
+
+        :param key: key
+        :param values: iterable
+        """
         if values is None:
             return
         if isinstance(values, real_bytes) or isinstance(values, real_unicode) or (not isiterable(values)):
@@ -136,8 +140,17 @@ class StructuredDataNamesValues(dict):
         Return string representation
         """
         return u' '.join(
-            u'{}="{}"'.format(key, _escape_param_values(values)) for key, values in viewitems(self) if values
+            u'{}="{}"'.format(key, _escape_param_values(values))
+            for key, values in viewitems(self)
+            if len(values) > 0
         )
+
+    def __iter__(self):
+        return (key for key, values in viewitems(self) if len(values) > 0)
+
+    # noinspection PyDocstring
+    def iterkeys(self):
+        return self.__iter__()
 
     def __bool__(self):
         return any(len(values) > 0 for values in viewvalues(self))
@@ -213,6 +226,9 @@ class StructuredData(dict):
         return results
 
     def dump(self):
+        """
+        Dump the structured data as a RFC 5424 string
+        """
         return u''.join(
             u'[{} {}]'.format(sdid, paramvalues.dump())
             for sdid, paramvalues in viewitems(self)
@@ -224,6 +240,13 @@ class StructuredData(dict):
 
     def __nonzero__(self):
         return self.__bool__()
+
+    def __iter__(self):
+        return (key for key, values in viewitems(self) if values)
+
+    # noinspection PyDocstring
+    def iterkeys(self):
+        return self.__iter__()
 
     def update(self, e=None, **f):
         """
