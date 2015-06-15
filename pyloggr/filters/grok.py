@@ -156,6 +156,12 @@ class GrokEngine(Engine):
         return self._pattern_nodes.keys()
 
     def search(self, s, patterns):
+        """
+        Parse string s using list of patterns
+
+        :param s: string
+        :param patterns: list of patterns
+        """
         if not isinstance(patterns, list):
             patterns = [patterns]
         for pattern in patterns:
