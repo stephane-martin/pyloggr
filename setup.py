@@ -3,6 +3,7 @@
 
 from setuptools import setup, find_packages
 import os
+import platform
 from os.path import dirname, abspath, join, commonprefix, expanduser
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
@@ -37,21 +38,24 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read().replace('.. :changelog:', '')
 
 requirements = [
-    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'hiredis', 'spooky_hash',
-    'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers', 'redis',
+    'ujson', 'cryptography', 'pika', 'geoip2', 'psycopg2', 'subprocess32', 'spooky_hash',
+    'ftfy', 'enum34', 'tornado', 'future', 'futures', 'jinja2', 'sortedcontainers',
     'requests', 'six', 'pyparsing', 'toro', 'python-dateutil', 'regex', 'sphinx>=1.3', 'argh',
     'sphinx_readable_theme', 'sphinx-rtd-theme', 'Mock', 'wheel', 'twine', 'pytz', 'arrow', 'httpagentparser',
     'requests_futures', 'configobj', 'python-daemon', 'lockfile', 'psutil', 'watchdog', 'momoko', 'cytoolz',
-    'msgpack-python', 'unidecode', 'elasticsearch'
+    'msgpack-python', 'unidecode', 'elasticsearch', 'lmdb', 'setproctitle', 'lz4'
 ]
 
-if on_rtd:
-    extensions_with_problems = [
-        'cryptography', 'pika', 'subprocess32', 'hiredis', 'spooky_hash', 'watchdog', 'psutil', 'lockfile', 'cytoolz',
-        'msgpack-python'
-    ]
-    for ext in extensions_with_problems:
-        requirements.remove(ext)
+extensions_with_problems = [
+    'cryptography', 'pika', 'subprocess32', 'spooky_hash', 'watchdog', 'psutil', 'lockfile', 'cytoolz',
+    'msgpack-python', 'lmdb', 'setproctitle', 'lz4'
+] if on_rtd else []
+
+for ext in extensions_with_problems:
+    requirements.remove(ext)
+
+if platform.system().lower().strip() == 'linux' and not on_rtd:
+    requirements.append('python-prctl')
 
 test_requirements = [
     # TODO: put package test requirements here
