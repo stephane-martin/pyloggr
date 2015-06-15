@@ -3,18 +3,19 @@
 """
 Router filter: choose RabbitMQ destination for the event
 """
-
 from __future__ import absolute_import, division, print_function
-
 __author__ = 'stef'
 
 import logging
+from .base import Engine
 
 logger = logging.getLogger(__name__)
 
-from .base import Engine
 
 class RouterEngine(Engine):
+    """
+    Change destination exchange of event
+    """
     def apply(self, ev, args, kw):
         exchanges = args
         if kw.get('exchange', None):
