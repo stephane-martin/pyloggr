@@ -231,11 +231,11 @@ class Consumer(object):
         Tornado coroutine
         """
         if self._consumer_tag:
-            self._consumer_tag = None
             if self.channel:
                 logger.info('Asking RabbitMQ to cancel the consumer')
                 yield Task(self.channel.basic_cancel, consumer_tag=self._consumer_tag)
                 logger.info('RabbitMQ confirmed the cancellation of the consumer')
+            self._consumer_tag = None
         self._close_channel()
 
     @property
