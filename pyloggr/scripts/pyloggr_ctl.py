@@ -15,6 +15,10 @@ from os.path import exists, expanduser, join, isfile
 from signal import SIGTERM
 import socket
 
+try:
+    import setproctitle
+except ImportError:
+    setproctitle = None
 import psutil
 # noinspection PyCompatibility
 import psycopg2
@@ -26,8 +30,7 @@ from tornado.gen import coroutine, TimeoutError
 from argh.helpers import ArghParser
 from argh.exceptions import CommandError
 
-
-from pyloggr.utils import ask_question
+from pyloggr.utils import ask_question, drop_capabilities, drop_caps_or_change_user
 from pyloggr.config import Config, set_configuration, set_logging
 
 
@@ -41,10 +44,11 @@ def set_config_env(config_dir):
     """
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not config_env:
-        if config_dir:
-            os.environ['PYLOGGR_CONFIG_DIR'] = config_dir
-        else:
-            os.environ['PYLOGGR_CONFIG_DIR'] = expanduser('~/.pyloggr')
+        if config_dir is None:
+            config_dir = expanduser('~/.pyloggr')
+            if not exists(config_dir):
+                os.makedirs(config_dir)
+        os.environ['PYLOGGR_CONFIG_DIR'] = config_dir
 
     config_env = os.environ.get('PYLOGGR_CONFIG_DIR')
     if not exists(config_env):
@@ -82,8 +86,9 @@ def _check_pid(name):
 
 
 def _run(process):
-    from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, FilterMachineProcess, PgSQLShipperProcess
-    from pyloggr.scripts.processes import HarvestProcess, CollectorProcess, FSShipperProcess, SyslogShipperProcess
+    from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, FilterMachineProcess
+    from pyloggr.scripts.processes import PgSQLShipperProcess, HarvestProcess, CollectorProcess
+    from pyloggr.scripts.processes import FSShipperProcess, SyslogShipperProcess, SyslogAgentProcess
     from pyloggr.utils import remove_pid_file
     pid_file = join(Config.PIDS_DIRECTORY, process + u".pid")
     try:
@@ -104,12 +109,13 @@ def _run(process):
             'harvest': HarvestProcess,
             'collector': CollectorProcess,
             'shipper2fs': FSShipperProcess,
-            'shipper2syslog': SyslogShipperProcess
+            'shipper2syslog': SyslogShipperProcess,
+            'agent': SyslogAgentProcess
         }
         process_class = dispatcher[process]
         try:
             process_obj = process_class()
-        except RuntimeError as ex:
+        except Exception as ex:
             raise CommandError("Process '{}' initialization error: {}".format(process, str(ex)))
         else:
             process_obj.main()
@@ -124,12 +130,22 @@ def run(process, config_dir=None):
     :param process: name of process
     :param config_dir: optional configuration directory
     """
+    process = str(process)
     set_config_env(config_dir)
+
     if process not in pyloggr_process:
         raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
 
     if _check_pid(process) is not None:
         raise CommandError("'{}' is already running".format(process))
+
+    if setproctitle is not None:
+        setproctitle.setproctitle('pyloggr_' + process)
+
+    if process not in binding_process:
+        # we can drop privileges now.
+        # for binding_process, we will drop priv after the sockets have been bound
+        drop_caps_or_change_user(Config.UID, Config.GID)
 
     _run(process)
 
@@ -149,6 +165,9 @@ def run_daemon(process, config_dir=None):
     if process not in pyloggr_process:
         raise CommandError("Unknown process. Please choose in {}".format(', '.join(pyloggr_process)))
 
+    if _check_pid(process) is not None:
+        raise CommandError("'{}' is already running".format(process))
+
     import daemon
     context = daemon.DaemonContext()
     context.umask = 0o022
@@ -156,12 +175,20 @@ def run_daemon(process, config_dir=None):
     context.prevent_core = True
     context.files_preserve = None
     context.detach_process = True
-
-    if _check_pid(process) is not None:
-        raise CommandError("'{}' is already running".format(process))
+    # change UID and GID now if we don't need to bind sockets later
+    if process not in binding_process:
+        if Config.UID is not None:
+            context.uid = Config.UID
+        if Config.GID is not None:
+            context.gid = Config.GID
 
     with context:
-        # we store the PID after the double-fork has been done
+        # on linux, try to keep only 'syslog' and 'bind privileged' sockets capabilities
+        try:
+            drop_capabilities(all=True)
+        except:
+            pass
+        # (so we store the PID after the double-fork has been done)
         _run(process)
 
 
@@ -235,6 +262,9 @@ def init_db(config_dir=None):
     The PostgreSQL user and database should have been manually created by the admin before
     """
     set_config_env(config_dir)
+    # change UID and PID
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_caps_or_change_user(Config.UID, Config.GID)
     try:
         psycopg2.connect(Config.POSTGRESQL.DSN)
     except psycopg2.Error:
@@ -275,6 +305,9 @@ def purge_db(config_dir=None):
     :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
+    # change UID and PID
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_caps_or_change_user(Config.UID, Config.GID)
     answer = ask_question("Are you sure you want to empty the PGSQL db ? (y/N)")
     if not answer:
         return
@@ -296,6 +329,9 @@ def purge_queues(config_dir=None):
     :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
+    # change UID and PID
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_caps_or_change_user(Config.UID, Config.GID)
     answer = ask_question("Are you sure you want to empty the RabbitMQ queues ? (y/N)")
     if not answer:
         return
@@ -326,6 +362,9 @@ def init_rabbitmq(config_dir=None):
     If an exchange or queue already exists, we silently pass
     """
     set_config_env(config_dir)
+    # change UID and PID
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_caps_or_change_user(Config.UID, Config.GID)
     from pyloggr.rabbitmq.management import Client, HTTPError
 
     @coroutine
@@ -491,6 +530,10 @@ def status(config_dir=None):
     :param config_dir: optional configuration directory
     """
     set_config_env(config_dir)
+    # change UID and PID
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_caps_or_change_user(Config.UID, Config.GID)
+
     print()
     for p_name in pyloggr_process:
         if _check_pid(p_name):
@@ -498,9 +541,6 @@ def status(config_dir=None):
         else:
             print(p_name + " is not running")
     print()
-    from pyloggr.cache import cache
-    cache.initialize()
-    print("Redis is running" if cache.available else "Redis is not running")
     from pyloggr.rabbitmq.publisher import Publisher, RabbitMQConnectionError
     publisher = Publisher(Config.NOTIFICATIONS)
     try:
@@ -543,6 +583,9 @@ def syslog_client(server, port, source=None, message=None, filename=None, severi
     :type app_name: str
     :type usessl: bool
     """
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_capabilities(all=True)
+
     from pyloggr.syslog.tcp_syslog_client import SyslogClient
 
     if message is None and filename is None:
@@ -555,7 +598,7 @@ def syslog_client(server, port, source=None, message=None, filename=None, severi
         raise CommandError("port must be an integer")
 
     if source is None:
-        source = socket.gethostname()
+        source = socket.getfqdn()
 
     @coroutine
     def _run_client():
@@ -606,6 +649,8 @@ def relp_client(server, port, source=None, message=None, filename=None, severity
     :type app_name: str
     :type usessl: bool
     """
+    # on linux, just keep syslog, net_bind_service capabilities
+    drop_capabilities(all=True)
     from pyloggr.syslog.relp_client import RELPClient, ServerClose
     if message is None and filename is None:
         raise CommandError("either message or filename should be given")
@@ -617,7 +662,7 @@ def relp_client(server, port, source=None, message=None, filename=None, severity
         raise CommandError("port must be an integer")
 
     if source is None:
-        source = socket.gethostname()
+        source = socket.getfqdn()
 
     @coroutine
     def _send(sendfile):
@@ -648,10 +693,15 @@ def relp_client(server, port, source=None, message=None, filename=None, severity
 
 
 pyloggr_process = ['frontend', 'syslog', 'shipper2pgsql', 'shipper2fs', 'filtermachine', 'harvest', 'collector',
-                   'shipper2syslog']
+                   'shipper2syslog', 'agent']
 
+# these processes may need to bind to a privileged port
+binding_process = ['frontend', 'syslog', 'agent']
 
 def _main():
+    # on linux, just keep setuid, setgid, syslog, net_bind_service capabilities
+    # on linux and macosx, we change UID and PID later (so that we can bind privileged sockets)
+    drop_capabilities(all=False)
     p = ArghParser()
     p.add_commands([
         run, run_all, run_daemon, run_daemon_all, stop, stop_all, status, init_db, init_rabbitmq, purge_db,
