@@ -4,6 +4,7 @@
 RELP client
 """
 
+from __future__ import absolute_import, division, print_function
 __author__ = 'stef'
 
 from io import open
@@ -13,20 +14,28 @@ from datetime import timedelta
 import ssl
 
 import arrow
+import lz4
 import certifi
-from tornado.gen import coroutine, Return, sleep, with_timeout, TimeoutError
+# noinspection PyCompatibility
+from concurrent.futures import ThreadPoolExecutor
+from tornado.gen import coroutine, Return, with_timeout, TimeoutError
 from tornado.tcpclient import TCPClient
+from tornado.concurrent import Future
 from tornado.ioloop import IOLoop
 from tornado.iostream import StreamClosedError
 from toro import Event as ToroEvent
 from future.utils import raise_from
 
 from pyloggr.utils.constants import RELP_OPEN_COMMAND, RELP_CLOSE_COMMAND
+from pyloggr.utils import sleep
 from pyloggr.event import Event
 
 
-logger = logging.getLogger(__name__)
 security_logger = logging.getLogger("security")
+
+
+def _compress(uncompressed_buf):
+    return lz4.compress(uncompressed_buf)
 
 
 class RELPException(Exception):
@@ -56,7 +65,7 @@ class RELPClient(object):
     """
 
     def __init__(self, server, port, use_ssl=False, verify_cert=True, hostname=None, ca_certs=None,
-                 client_key=None, client_cert=None):
+                 client_key=None, client_cert=None, server_deadline=120):
         self.server = server
         self.port = port
         self.stream = None
@@ -69,6 +78,12 @@ class RELPClient(object):
         self.ca_certs = ca_certs if ca_certs else certifi.where()
         self.client_key = client_key
         self.client_cert = client_cert
+        self.server_deadline = server_deadline
+        self._lz4_queue = []
+        self._flush_lz4_queue = None
+        self.compress_thread = None
+        self.acks = None
+        self.unexpected_close = None
 
     @coroutine
     def start(self):
@@ -84,6 +99,7 @@ class RELPClient(object):
         self.client = TCPClient()
         self.closed_connection_event = ToroEvent()
         self.current_relp_id = 1
+        logger = logging.getLogger(__name__)
         try:
             connect_future = with_timeout(
                 timeout=timedelta(seconds=10),
@@ -129,14 +145,45 @@ class RELPClient(object):
             logger.error("RELP opening connection failed")
             raise_from(ServerClose("RELP opening connection failed"), ex)
 
+        self.compress_thread = ThreadPoolExecutor(max_workers=1)
+
         # everything OK, increment the counter
         self.current_relp_id += 1
+
+        self.acks = {}
+        self.unexpected_close = ToroEvent()
+        # receive the responses in background
+        IOLoop.current().add_callback(self._read_streaming_responses)
+
         raise Return(self.closed_connection_event)
 
     def _on_stream_closed(self):
         self.closed_connection_event.set()
-        if self.client:
-            self.client.close()
+        self._cleanup()
+
+    @coroutine
+    def _read_streaming_responses(self):
+        logger = logging.getLogger(__name__)
+        while True:
+            try:
+                response_id, code, data = yield self._read_one_response()
+            except ServerClose:
+                logger.error("_read_streaming_responses: server announced unexpected close")
+                self.stream.close()
+                self.unexpected_close.set()
+                return
+            except StreamClosedError:
+                logger.error("_read_streaming_responses: stream closed error")
+                self.unexpected_close.set()
+                return
+            except ServerBoo:
+                logger.error("_read_streaming_responses: did not understand response")
+                self.stream.close()
+                self.unexpected_close.set()
+                return
+            if code == 200:
+                logger.debug("RELP client: remote RELP server ACKed one message")
+            self.acks[response_id] = True if code == 200 else False
 
     @coroutine
     def _read_one_response(self):
@@ -187,89 +234,158 @@ class RELPClient(object):
             else:
                 # yield self._read_one_response()
                 self.stream.close()
+        self._cleanup()
+
+    def _cleanup(self):
         if self.client:
             self.client.close()
+        if self.compress_thread is not None:
+            self.compress_thread.shutdown()
+            self.compress_thread = None
 
     @coroutine
-    def send_events(self, events, frmt="RFC5424"):
+    def send_events(self, events, frmt="RFC5424", compress=False):
         """
         send_events(events, frmt="RFC5424")
         Send multiple events to the RELP server
 
         :param events: events to send (iterable of :py:class:`Event`)
         :param frmt: event dumping format
+        :param compress: if True, send the events as one LZ4-compressed line
+        :type events: iterable of Event
+        :type frmt: str
+        :type compress: bool
         """
 
-        acks = {}
-        unexpected_close = ToroEvent()
-        print("AHHHH", unexpected_close.is_set())
+        if self.closed_connection_event.is_set():
+            raise Return((False, None))
+
         n_start = self.current_relp_id
-        got_all_answers = ToroEvent()
+        logger = logging.getLogger(__name__)
+        relp_ids = set()
+        nb_total_events = 0
 
-        @coroutine
-        def _read_streaming_responses():
-            while not got_all_answers.is_set():
-                try:
-                    response_id, code, data = yield self._read_one_response()
-                except ServerClose:
-                    logger.error("_read_streaming_responses: server announced unexpected close")
-                    self.stream.close()
-                    unexpected_close.set()
-                    return
-                except StreamClosedError:
-                    logger.error("_read_streaming_responses: stream closed error")
-                    unexpected_close.set()
-                    return
-                except ServerBoo:
-                    logger.error("_read_streaming_responses: did not understand response")
-                    self.stream.close()
-                    unexpected_close.set()
-                    return
-                if code == 200:
-                    logger.debug("Remote RELP server ACKed one message")
-                acks[response_id - n_start] = True if code == 200 else False
+        if compress:
+            # same relp ID for every line
+            current_relp_id_str = str(self.current_relp_id)
+            relp_ids.add(self.current_relp_id)
+            # increment current_relp_if *before* any yield !
+            self.current_relp_id += 1
+            nb_total_events = 1
 
-        # receive the responses in background
-        IOLoop.current().add_callback(_read_streaming_responses)
+            bytes_events = (event.dump(frmt=frmt) for event in events)
+            lines = (str(len(bytes_event)) + ' ' + bytes_event for bytes_event in bytes_events)
+            relp_lines = (current_relp_id_str + " syslog " + line + "\n" for line in lines)
+            uncompressed_buf = "".join(relp_lines)
+            # compress the buf with LZ4
+            compressed_buf = yield self.compress_thread.submit(_compress, uncompressed_buf)
+            ratio = int(100 - (100 * len(compressed_buf) // len(uncompressed_buf)))
+            logger.debug("RELP client: LZ4 compression ratio: %s", ratio)
+            relp_line = current_relp_id_str + " lz4 " + str(len(compressed_buf)) + ' ' + compressed_buf  + "\n"
 
-        # send the events
-        try:
+            try:
+                yield self.stream.write(relp_line)
+            except StreamClosedError:
+                logger.info("Relp client sending events: Stream closed error ?!")
+                self.unexpected_close.set()
+        else:
+            # send the events separately, without compression
+            relp_lines = []
+            # there is no "yield" in the for loop, so the self.current_relp_id can be incremented without
+            # any race condition (at the cost of consumed RAM)
             for event in events:
                 bytes_event = event.dump(frmt=frmt)
                 line = str(len(bytes_event)) + ' ' + bytes_event
-                relp_line = str(self.current_relp_id) + " " + "syslog " + line + "\n"
-                yield self.stream.write(relp_line)
+                relp_lines.append(str(self.current_relp_id) + " " + "syslog " + line + "\n")
+                relp_ids.add(self.current_relp_id)
                 self.current_relp_id += 1
-        except StreamClosedError:
-            logger.info("Relp client sending events: Stream closed error ?!")
-            unexpected_close.set()
-
-        nb_total_events = self.current_relp_id - n_start
+                nb_total_events += 1
+            try:
+                yield self.stream.write("".join(relp_lines))
+            except StreamClosedError:
+                logger.info("Relp client sending events: Stream closed error ?!")
+                self.unexpected_close.set()
 
         # wait that until we have all answers
-        while (len(acks) != nb_total_events) and (not unexpected_close.is_set()):
-            yield sleep(1)
-        if len(acks) == nb_total_events:
-            got_all_answers.set()
-        raise Return((not unexpected_close.is_set(), acks))
+        elapsed = 0
+        while (not relp_ids.issubset(set(self.acks.keys()))) and (not self.unexpected_close.is_set()):
+            yield sleep(1, wake_event=self.unexpected_close)
+            elapsed += 1
+            if elapsed >= self.server_deadline:
+                logger.warning("RELP client: the server did not sent all answers before deadline. Giving up.")
+                self.stream.close()
+                self.unexpected_close.set()
+
+        if compress:
+            if n_start in self.acks:
+                status = [self.acks[n_start] and not self.unexpected_close.is_set()]
+                acks = nb_total_events * status
+                raise Return((status, acks))
+            else:
+                raise Return((False, nb_total_events * [False]))
+        else:
+            # return all the ACKs that we've got
+            acks = [self.acks.get(relp_id, False) for relp_id in sorted(relp_ids)]
+            raise Return((not self.unexpected_close.is_set(), acks))
 
     # noinspection PyUnusedLocal
     @coroutine
-    def publish_event(self, event, routing_key=None, frmt="RFC5424"):
+    def publish_event(self, event, routing_key=None, frmt="RFC5424", compress=False):
         """
         publish_event(event, routing_key=None, frmt="RFC5424")
-        Send a single event to the RELP server
+        Send one event to the RELP server
 
-        :param event: event to send
-        :param routing_key: not used, just here for signature
+        :param event: event
+        :param routing_key: not used, just here for method signature
         :param frmt: event dumping format
+        :param compress: should the RELP client pack messages and compress them
         :type event: Event
+        :type routing_key: str
+        :type frmt: str
+        :type compress: bool
         """
-        status, acks = yield self.send_events([event], frmt=frmt)
-        if not status:
+        logger = logging.getLogger(__name__)
+        if self.closed_connection_event.is_set():
             raise Return((False, event))
+        if compress and frmt != "RFC5424":
+            raise ValueError("With compress=True, frmt must be RFC5424")
+        if compress:
+            logger.debug("RELP client: queueing event '%s' for LZ4", event.uid)
+            # pack this event with previous ones in _lz4_queue
+            future_publish_status = Future()
+            self._lz4_queue.append((event, future_publish_status))
+            if len(self._lz4_queue) >= 10000:
+                # send the _lz4_queue
+                if self._flush_lz4_queue is not None:
+                    IOLoop.current().remove_handler(self._flush_lz4_queue)
+                    self._flush_lz4_queue = None
+                yield self._do_flush_lz4_queue()
+            if self._flush_lz4_queue is None:
+                self._flush_lz4_queue = IOLoop.current().add_timeout(timedelta(seconds=30), self._do_flush_lz4_queue)
+            # wait that our event is actually published
+            status = yield future_publish_status
+            raise Return((status, event))
         else:
-            raise Return((acks[0], event))
+            logger.debug("RELP client: sending event '%s' without compression", event.uid)
+            # just sent the single event
+            status, acks = yield self.send_events([event], frmt=frmt, compress=False)
+            if not status:
+                raise Return((False, event))
+            else:
+                raise Return((acks[0], event))
+
+    @coroutine
+    def _do_flush_lz4_queue(self):
+        self._flush_lz4_queue = None
+        logger = logging.getLogger(__name__)
+        logger.debug("LZ4 queue flush: %s events", len(self._lz4_queue))
+        if len(self._lz4_queue) == 0:
+            return
+        queue, self._lz4_queue = self._lz4_queue, []
+        events = [event for event, _ in queue]
+        status, _ = yield self.send_events(events, compress=True)
+        # notify callers via Future
+        [future.set_result(status) for _, future in queue]
 
     @coroutine
     def send_message(self, message, source, severity, facility, app_name, frmt="RFC5424"):
@@ -284,6 +400,9 @@ class RELPClient(object):
         :param app_name: event application name
         :param frmt: event dumping format
         """
+        if self.closed_connection_event.is_set():
+            raise Return(False)
+
         event = Event(severity=severity, facility=facility, app_name=app_name, source=source,
                       timereported=arrow.utcnow(), message=message)
         status, _ = yield self.publish_event(event, frmt=frmt)
@@ -302,6 +421,8 @@ class RELPClient(object):
         :param app_name: log application name
         :param frmt: event dumping format
         """
+        if self.closed_connection_event.is_set():
+            raise Return((False, None))
 
         def _file_to_events_generator(stream):
             for line in stream:
