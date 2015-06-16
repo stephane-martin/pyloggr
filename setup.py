@@ -66,7 +66,7 @@ if __name__ == "__main__":
     data_files = [(join(expanduser('~/.pyloggr'), root), list_of_files) for root, list_of_files in list_subdir('config')]
     setup(
         name='pyloggr',
-        version='0.1.3',
+        version='0.3',
         description='Centralize, parse, store and search logs',
         long_description=readme + '\n\n' + history,
         author='Stephane Martin',
