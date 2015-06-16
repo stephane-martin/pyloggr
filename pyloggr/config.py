@@ -256,7 +256,7 @@ class SyslogServerConfig(GenericConfig):
     Parameters for syslog servers
     """
     def __init__(self, name, ports=None, stype='tcp', localhost_only=False, socket_names=None, ssl=None,
-                 packer_groups=None):
+                 packer_groups=None, compress=False):
         self.name = str(name)
         if ports is None:
             self.ports = []
@@ -266,7 +266,9 @@ class SyslogServerConfig(GenericConfig):
             self.ports = [int(ports)]
         self.stype = str(stype)
         localhost_only = _make_bool(localhost_only)
+        compress = _make_bool(compress)
         self.localhost_only = localhost_only if localhost_only is not None else False
+        self.compress = compress if compress is not None else False
         self.ssl = SSLConfig.from_dict(ssl) if ssl else None
         self.packer_groups = packer_groups.split(',') if packer_groups else []
         if not socket_names:
