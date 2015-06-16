@@ -12,10 +12,10 @@ os.environ['SPHINX_BUILD'] = "True"
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
 
-class Mock(MagicMock):
+class _Mock(MagicMock):
     @classmethod
     def __getattr__(cls, name):
-            return Mock()
+            return _Mock()
 
 # let's mock some modules so that readthedocs doesn't complain
 
@@ -23,17 +23,15 @@ MOCK_MODULES = [
     'enum', 'pyev', 'pika', 'pika.adapters', 'pika.exceptions', 'pika.adapters.tornado_connection', 'cryptography',
     'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
     'cryptography.exceptions', 'subprocess32', 'spooky_hash', 'psutil', 'watchdog', 'PyYAML',
-    'lockfile'
+    'lockfile', 'cytoolz', 'msgpack-python', 'lmdb', 'setproctitle', 'lz4'
 ]
-sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
+sys.modules.update((mod_name, _Mock()) for mod_name in MOCK_MODULES)
 
 import pyloggr
 import sphinx_readable_theme
 
 
 # -- General configuration ------------------------------------------------
-
-
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
