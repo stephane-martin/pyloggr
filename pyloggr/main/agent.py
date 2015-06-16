@@ -12,6 +12,7 @@ import socket
 import arrow
 import logging
 import time
+from itertools import cycle
 # noinspection PyCompatibility
 from queue import Queue
 from copy import copy
@@ -27,7 +28,7 @@ from pyloggr.utils.simple_queue import ThreadSafeQueue
 from pyloggr.syslog.relp_client import ServerClose
 from pyloggr.syslog import client_factory
 from pyloggr.syslog.server import BaseSyslogServer, SyslogParameters, BaseSyslogClientConnection
-from pyloggr.config import SyslogServerConfig, SyslogAgentConfig
+from pyloggr.config import SyslogServerConfig, SyslogAgentConfig, SyslogAgentDestination
 
 
 class SyslogAgent(BaseSyslogServer):
@@ -275,6 +276,8 @@ class Publications(Thread):
         self.syslog_server_is_available = syslog_server_is_available
         self.publication_ioloop = None
 
+        self.next_destination_idx = cycle(range(len(syslog_agent_config.destinations)))
+
     # noinspection PyDocstring
     def run(self):
         # start a second IOLoop for publications to remote syslog
@@ -287,36 +290,39 @@ class Publications(Thread):
 
     @coroutine
     def _do_start(self):
-        # todo: implement failover
         # try to connect to the remote syslog
         logger = logging.getLogger(__name__)
+        idx = next(self.next_destination_idx)
+        destination = self.syslog_agent_config.destinations[idx]
+        assert(isinstance(destination, SyslogAgentDestination))
+        last_destination = idx == (len(self.syslog_agent_config.destinations) - 1)
         self.syslog_or_relp_client = client_factory(
-            protocol=self.syslog_agent_config.protocol,
-            servr=self.syslog_agent_config.host,
-            port=self.syslog_agent_config.port,
-            use_ssl=self.syslog_agent_config.tls,
-            verify_cert=self.syslog_agent_config.verify_server_cert,
-            hostname=self.syslog_agent_config.tls_hostname,
+            protocol=destination.protocol,
+            servr=destination.host,
+            port=destination.port,
+            use_ssl=destination.tls,
+            verify_cert=destination.verify_server_cert,
+            hostname=destination.tls_hostname,
             server_deadline=self.syslog_agent_config.server_deadline
         )
         if self.stopping.is_set():
             return
         try:
+            logger.info("Connecting to syslog destination %s", idx)
             self.closed_connection_event = yield self.syslog_or_relp_client.start()
         except (socket.error, TimeoutError):
             logger.error("Syslog agent: can't connect to remote syslog server")
-            yield sleep(60, threading_event=self.stopping)
+            if last_destination:
+                yield sleep(60, threading_event=self.stopping)
             if not self.stopping.is_set():
-                yield sleep(60, self.stopping)
-                if not self.stopping.is_set():
-                    IOLoop.current().add_callback(self._do_start)
+                IOLoop.current().add_callback(self._do_start)
             return
         except ServerClose:
             logger.critical("Syslog agent: remote syslog unexpectedly closed the connection")
+            if last_destination:
+                yield sleep(60, threading_event=self.stopping)
             if not self.stopping.is_set():
-                yield sleep(60, self.stopping)
-                if not self.stopping.is_set():
-                    IOLoop.current().add_callback(self._do_start)
+                IOLoop.current().add_callback(self._do_start)
             return
         else:
             self.syslog_server_is_available.set()
@@ -330,8 +336,9 @@ class Publications(Thread):
                 # the run_method will then return, terminating the publication thread
             else:
                 # lost connection to the remote syslog server
-                # we wait 1 minute before trying to reconnect
-                yield sleep(60, threading_event=self.stopping)
+                if last_destination:
+                    # we wait 1 minute before trying to reconnect
+                    yield sleep(60, threading_event=self.stopping)
                 if not self.stopping.is_set():
                     IOLoop.current().add_callback(self._do_start)
 
