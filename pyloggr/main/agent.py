@@ -8,6 +8,7 @@ __author__ = 'stef'
 
 from threading import Thread
 import threading
+from os.path import exists
 import socket
 import arrow
 import logging
@@ -21,6 +22,7 @@ from datetime import timedelta
 from queue import Empty as QueueEmpty
 from tornado.gen import coroutine, TimeoutError
 from tornado.ioloop import IOLoop
+
 from pyloggr.event import Event, ParsingError, InvalidSignature
 from pyloggr.utils.lmdb_wrapper import LmdbWrapper
 from pyloggr.utils import sleep
@@ -232,7 +234,8 @@ class SyslogAgent(BaseSyslogServer):
         # call stop_all
         yield super(SyslogAgent, self).shutdown()
         # cleanly close LMDB
-        LmdbWrapper.get_instance(self.syslog_agent_config.lmdb_db_name).close()
+        if exists(self.syslog_agent_config.lmdb_db_name):
+            LmdbWrapper.get_instance(self.syslog_agent_config.lmdb_db_name).close()
 
     # noinspection PyDocstring
     def handle_data(self, data, sockname, peername):
@@ -293,16 +296,16 @@ class Publications(Thread):
         # try to connect to the remote syslog
         logger = logging.getLogger(__name__)
         idx = next(self.next_destination_idx)
-        destination = self.syslog_agent_config.destinations[idx]
-        assert(isinstance(destination, SyslogAgentDestination))
+        self.destination = self.syslog_agent_config.destinations[idx]
+        assert(isinstance(self.destination, SyslogAgentDestination))
         last_destination = idx == (len(self.syslog_agent_config.destinations) - 1)
         self.syslog_or_relp_client = client_factory(
-            protocol=destination.protocol,
-            servr=destination.host,
-            port=destination.port,
-            use_ssl=destination.tls,
-            verify_cert=destination.verify_server_cert,
-            hostname=destination.tls_hostname,
+            protocol=self.destination.protocol,
+            servr=self.destination.host,
+            port=self.destination.port,
+            use_ssl=self.destination.tls,
+            verify_cert=self.destination.verify_server_cert,
+            hostname=self.destination.tls_hostname,
             server_deadline=self.syslog_agent_config.server_deadline
         )
         if self.stopping.is_set():
@@ -326,6 +329,7 @@ class Publications(Thread):
             return
         else:
             self.syslog_server_is_available.set()
+            logger.info("Syslog agent: connected to destination '%s'", idx)
             IOLoop.current().add_callback(self._wait_for_messages)
             # the next wait will return if self.stopping is set thanks to the end of _wait_for_messages
             yield self.closed_connection_event.wait()
@@ -357,7 +361,7 @@ class Publications(Thread):
         logger = logging.getLogger(__name__)
         # wait for LMDB messages. we stop the loop if we are asked to stop, or if we lost the connection to
         # the remote syslog server
-        compress = self.syslog_agent_config.compress
+        compress = self.destination.compress
         while (not self.stopping.is_set()) and (not self.closed_connection_event.is_set()):
             try:
                 idx, obj = yield self.publication_queue.get_wait(deadline=timedelta(seconds=1))
@@ -376,7 +380,7 @@ class Publications(Thread):
             logger.debug("Sending one event to remote syslog: {}".format(ev.uuid))
             future = self.syslog_or_relp_client.publish_event(
                 event=ev,
-                frmt=self.syslog_agent_config.frmt,
+                frmt=self.destination.frmt,
                 compress=compress
             )
             IOLoop.current().add_future(future, self._consume_relp_client_response)

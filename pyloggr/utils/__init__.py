@@ -73,9 +73,29 @@ def remove_pid_file(name):
     if exists(pid_file):
         try:
             os.remove(pid_file)
-        except OSError:
-            pass
+        except OSError as ex:
+            if ex.errno == 2:
+                logging.info("PID file '%s' not removed cause it does not exist", pid_file)
+            else:
+                logging.warning("Impossible to remove PID file '%s'", pid_file)
 
+def write_pid_file(directory, process, uid=None, gid=None):
+    pid_file = join(directory, process + u".pid")
+    try:
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        raise OSError("Error trying to write PID file '%s'", pid_file)
+    if uid is not None:
+        try:
+            os.chown(pid_file, uid, -1)
+        except OSError:
+            logging.warning("Impossible to change UID of file '%s' to '%s'", pid_file, uid)
+    if gid is not None:
+        try:
+            os.chown(pid_file, -1, gid)
+        except OSError:
+            logging.warning("Impossible to change GID of file '%s' to '%s'", pid_file, gid)
 
 def ask_question(question):
     """

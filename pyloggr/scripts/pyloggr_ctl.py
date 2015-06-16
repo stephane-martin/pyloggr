@@ -31,7 +31,7 @@ from argh.helpers import ArghParser
 from argh.exceptions import CommandError
 
 from pyloggr.utils import ask_question, drop_capabilities, drop_caps_or_change_user
-from pyloggr.config import Config, set_configuration, set_logging
+from pyloggr.config import Config, set_configuration, set_logging, set_agent_configuration
 
 
 def set_config_env(config_dir):
@@ -88,7 +88,7 @@ def _check_pid(name):
 def _run(process):
     from pyloggr.scripts.processes import SyslogProcess, FrontendProcess, FilterMachineProcess
     from pyloggr.scripts.processes import PgSQLShipperProcess, HarvestProcess, CollectorProcess
-    from pyloggr.scripts.processes import FSShipperProcess, SyslogShipperProcess, SyslogAgentProcess
+    from pyloggr.scripts.processes import FSShipperProcess, SyslogShipperProcess
     from pyloggr.utils import remove_pid_file
     pid_file = join(Config.PIDS_DIRECTORY, process + u".pid")
     try:
@@ -109,8 +109,7 @@ def _run(process):
             'harvest': HarvestProcess,
             'collector': CollectorProcess,
             'shipper2fs': FSShipperProcess,
-            'shipper2syslog': SyslogShipperProcess,
-            'agent': SyslogAgentProcess
+            'shipper2syslog': SyslogShipperProcess
         }
         process_class = dispatcher[process]
         try:
@@ -121,6 +120,44 @@ def _run(process):
             process_obj.main()
     finally:
         remove_pid_file(process)
+
+def agent(config_file=None):
+    from pyloggr.scripts.processes import SyslogAgentProcess
+    from pyloggr.utils import remove_pid_file, write_pid_file
+
+    config_env = os.environ.get('PYLOGGR_AGENT_CONFIG_FILE')
+    if not config_env:
+        if config_file is None:
+            config_file = expanduser('~/.pyloggr/syslog_agent.conf')
+        os.environ['PYLOGGR_AGENT_CONFIG_FILE'] = config_file
+
+    config_env = os.environ.get('PYLOGGR_AGENT_CONFIG_FILE')
+    if not exists(config_env):
+        raise CommandError("Config directory '{}' does not exists".format(config_env))
+
+    set_agent_configuration(config_env)
+    if _check_pid('agent') is not None:
+        raise CommandError("'agent' is already running")
+
+    set_logging(
+        filename=Config.SYSLOG_AGENT.logs_file,
+        level=Config.SYSLOG_AGENT.logs_level
+    )
+
+    if setproctitle is not None:
+        setproctitle.setproctitle('pyloggr_agent')
+
+    write_pid_file(Config.SYSLOG_AGENT.pids_directory, 'agent', Config.SYSLOG_AGENT.UID, Config.SYSLOG_AGENT.GID)
+
+    try:
+        try:
+            process_obj = SyslogAgentProcess()
+        except Exception as ex:
+            raise CommandError("Process 'agent' initialization error: %s", str(ex))
+        else:
+            process_obj.main()
+    finally:
+        remove_pid_file('agent')
 
 
 def run(process, config_dir=None):
@@ -693,10 +730,10 @@ def relp_client(server, port, source=None, message=None, filename=None, severity
 
 
 pyloggr_process = ['frontend', 'syslog', 'shipper2pgsql', 'shipper2fs', 'filtermachine', 'harvest', 'collector',
-                   'shipper2syslog', 'agent']
+                   'shipper2syslog']
 
 # these processes may need to bind to a privileged port
-binding_process = ['frontend', 'syslog', 'agent']
+binding_process = ['frontend', 'syslog']
 
 def _main():
     # on linux, just keep setuid, setgid, syslog, net_bind_service capabilities
@@ -705,7 +742,7 @@ def _main():
     p = ArghParser()
     p.add_commands([
         run, run_all, run_daemon, run_daemon_all, stop, stop_all, status, init_db, init_rabbitmq, purge_db,
-        purge_queues, syslog_client, relp_client
+        purge_queues, syslog_client, relp_client, agent
     ])
     try:
         p.dispatch()

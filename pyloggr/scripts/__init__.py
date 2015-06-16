@@ -26,12 +26,13 @@ class PyloggrProcess(object):
     """
     Boilerplate for starting the different pyloggr processes
     """
-    def __init__(self, fork=True):
+    def __init__(self, fork=True, shared_cache=True):
         self.name = self.__class__.__name__
         self.logger = None
         self.fork = fork
         self.task_id = -1
         self.pyloggr_process = None
+        self.shared_cache = shared_cache
 
     def main(self):
         """
@@ -45,8 +46,8 @@ class PyloggrProcess(object):
         self.logger = logging.getLogger('pyloggr')
 
         Event.set_hmac_key(Config.HMAC_KEY)
-
-        Cache.initialize()
+        if self.shared_cache:
+            Cache.initialize()
 
         signal(SIGTERM, self._parent_sig_handler)
         signal(SIGINT, self._parent_sig_handler)
@@ -131,8 +132,9 @@ class PyloggrProcess(object):
             sleepers = [timeout for timeout in io_loop._timeouts if getattr(timeout.callback, 'sleeper', None)]
             lmap(io_loop.remove_timeout, sleepers)
 
-        deadline = time.time() + Config.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
-        countdown = Config.MAX_WAIT_SECONDS_BEFORE_SHUTDOWN
+        max_wait = getattr(Config, 'MAX_WAIT_SECONDS_BEFORE_SHUTDOWN', 10)
+        deadline = time.time() + max_wait
+        countdown = max_wait
 
         def _stop_loop(counter):
             self.logger.debug(counter)

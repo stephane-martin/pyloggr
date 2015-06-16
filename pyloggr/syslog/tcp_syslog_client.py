@@ -77,6 +77,7 @@ class SyslogClient(GenericClient):
 
         if compress:
             s = yield self.compress_thread.submit(self._compress, buf.getvalue())
+            s = str(len(s)) + ' ' + s
         else:
             s = buf.getvalue()
 

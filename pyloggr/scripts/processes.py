@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 __author__ = 'stef'
 
 import logging
+import socket
 
 from tornado.gen import coroutine
 from tornado.ioloop import IOLoop
@@ -26,7 +27,13 @@ class SyslogProcess(PyloggrProcess):
         from pyloggr.main.syslog_server import SyslogParameters
 
         self.syslog_config = SyslogParameters(Config.SYSLOG)
-        self.syslog_config.bind_all_sockets()
+        try:
+            self.syslog_config.bind_all_sockets()
+        except socket.error:
+            logging.error("Impossible to bind sockets (try sudo?)")
+            IOLoop.instance().add_callback(self.shutdown)
+            return
+
         # now that we have bound the sockets, we can drop privileges
         drop_caps_or_change_user(Config.UID, Config.GID)
 
@@ -58,13 +65,18 @@ class SyslogAgentProcess(PyloggrProcess):
     Implements a syslog agent for end clients
     """
     def __init__(self):
-        PyloggrProcess.__init__(self, fork=False)
+        PyloggrProcess.__init__(self, fork=False, shared_cache=False)
 
     @coroutine
     def _launch(self):
         from pyloggr.main.agent import SyslogAgent
         self.pyloggr_process = SyslogAgent(Config.SYSLOG_AGENT)
-        self.pyloggr_process.syslog_parameters.bind_all_sockets()
+        try:
+            self.pyloggr_process.syslog_parameters.bind_all_sockets()
+        except socket.error:
+            logging.error("Impossible to bind sockets (try sudo?)")
+            IOLoop.instance().add_callback(self.shutdown)
+            return
         drop_caps_or_change_user(Config.UID, Config.GID)
         self.logger.info("Starting {}".format(self.name))
         yield self.pyloggr_process.launch()
@@ -212,7 +224,13 @@ class FrontendProcess(PyloggrProcess):
     def __init__(self):
         from tornado.netutil import bind_sockets
         PyloggrProcess.__init__(self, fork=False)
-        self.sockets = bind_sockets(Config.HTTP_PORT)
+        try:
+            self.sockets = bind_sockets(Config.HTTP_PORT)
+        except socket.error:
+            logging.error("Impossible to bind socket to port '%s' (try sudo?)", Config.HTTP_PORT)
+            IOLoop.instance().add_callback(self.shutdown)
+            return
+
         drop_caps_or_change_user(Config.UID, Config.GID)
 
     @coroutine

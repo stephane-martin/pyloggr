@@ -511,6 +511,8 @@ class Event(object):
         :rtype: bool
         :raise InvalidSignature: if HMAC is invalid
         """
+        if not Event.HMAC_KEY:
+            return True
         _hmac = self.structured_data[PYLOGGR_SDID]['hmac']
         if not _hmac:
             logger.debug("Event (UUID: {}) doesn't have a HMAC".format(self.uuid))
@@ -813,7 +815,7 @@ class Event(object):
             else:
                 raise
 
-        if hmac:
+        if hmac and Event.HMAC_KEY:
             # verify HMAC if the event has one, else generate a HMAC
             try:
                 event.generate_hmac(verify_if_exists=True)

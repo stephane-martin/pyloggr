@@ -246,7 +246,7 @@ class LoggingConfig(GenericConfig):
     """
     def __init__(self, level="DEBUG", **kwargs):
         for name in ['security', 'syslog', 'filtermachine', 'frontend', 'shipper2fs', 'shipper2pgsql', 'harvest',
-                     'collector', 'shipper2syslog', 'agent']:
+                     'collector', 'shipper2syslog']:
             self.__setattr__(name, str(kwargs.get(name, "~/logs/pyloggr.{}.log".format(name))))
         self.level = str(level) if level else "DEBUG"
 
@@ -300,9 +300,22 @@ class SyslogAgentConfig(GenericConfig):
     """
     Parameters for the syslog agent
     """
-    def __init__(self, destinations=None, tcp_ports=None, udp_ports=None, relp_ports=None, socket_names=None, pause=5,
-                 lmdb_db_name="~/lmdb/agent_queue", localhost_only=True, server_deadline=120):
+    def __init__(self, UID=None, GID=None, destinations=None, tcp_ports=None, udp_ports=None, relp_ports=None, pause=5,
+                 lmdb_db_name="~/lmdb/agent_queue", localhost_only=True, server_deadline=120, socket_names=None,
+                 pids_directory="~/pids", logs_directory="~/logs", HMAC_KEY=None, logs_level="DEBUG"):
 
+        self.UID = getpwnam(str(UID)).pw_uid if UID else None
+        self.GID = getgrnam(str(GID)).gr_gid if GID else None
+
+        self.logs_level = logs_level if logs_level else "DEBUG"
+        pids_directory = pids_directory if pids_directory else "~/pids"
+        self.pids_directory = check_directory(pids_directory, self.UID, self.GID, create=True)
+        logs_directory = logs_directory if logs_directory else "~/logs"
+        self.logs_directory = check_directory(logs_directory, self.UID, self.GID, create=True)
+        lmdb_db_name = lmdb_db_name if lmdb_db_name else "~/lmdb/agent_queue"
+        self.lmdb_db_name = check_directory(lmdb_db_name, self.UID, self.GID, create=True)
+
+        self.logs_file = join(self.logs_directory, 'pyloggr.agent.log')
         if not tcp_ports:
             self.tcp_ports = []
         elif isinstance(tcp_ports, list):
@@ -331,13 +344,15 @@ class SyslogAgentConfig(GenericConfig):
         else:
             self.socket_names = [abspath(expanduser(str(socket_names)))]
 
-        self.lmdb_db_name = lmdb_db_name
         self.pause = int(pause) if pause else 5
         self.server_deadline = int(server_deadline) if server_deadline is not None else 120
 
         localhost_only = _make_bool(localhost_only)
         self.localhost_only = localhost_only if localhost_only is not None else True
         self.destinations = destinations
+        self.HMAC_KEY = b64decode(HMAC_KEY) if HMAC_KEY else None
+        if not HMAC_KEY:
+            logging.warning("You should specify a HMAC_KEY")
 
 class HarvestDirectory(GenericConfig):
     """
@@ -408,7 +423,6 @@ class GlobalConfig(object):
         c._load_logging_conf()
         c._load_harvest_conf()
         c._load_syslog_servers_conf()
-        c._load_syslog_agent_conf()
         c._load_machines_conf()
         c._load_shipper2syslog_conf()
         return c
@@ -454,15 +468,6 @@ class GlobalConfig(object):
         for server_name in server_names:
             d[server_name]['name'] = server_name
             self.SYSLOG[server_name] = SyslogServerConfig.from_dict(d[server_name])
-
-    def _load_syslog_agent_conf(self):
-        syslog_agent_conf_filename = join(self.CONFIG_DIR, 'syslog_agent.conf')
-        d = _config_file_to_dict(syslog_agent_conf_filename)
-        dest_names = [dest_name for dest_name in d if isinstance(d[dest_name], dict)]
-        others = {key: value for key, value in d.items() if key not in dest_names}
-        self.SYSLOG_AGENT = SyslogAgentConfig.from_dict(others)
-        self.SYSLOG_AGENT.destinations = [SyslogAgentDestination.from_dict(d[dest_name]) for dest_name in dest_names]
-        self.SYSLOG_AGENT.lmdb_db_name = check_directory(self.SYSLOG_AGENT.lmdb_db_name, self.UID, self.GID)
 
     def _load_machines_conf(self):
         syslog_servers_conf_filename = join(self.CONFIG_DIR, 'machines.conf')
@@ -538,7 +543,10 @@ def set_logging(filename, level="DEBUG"):
     }
 
     filename = abspath(expanduser(filename))
-    security_filename = abspath(expanduser(Config.LOGGING_FILES.security))
+    if hasattr(Config, "LOGGING_FILES"):
+        security_filename = abspath(expanduser(Config.LOGGING_FILES.security))
+    else:
+        security_filename = filename
     check_directory(dirname(filename), Config.UID, Config.GID)
     check_directory(dirname(security_filename), Config.UID, Config.GID)
 
@@ -554,6 +562,17 @@ class Config(object):
     """
     pass
 
+
+def set_agent_configuration(config_file):
+    d = _config_file_to_dict(config_file)
+    dest_names = [dest_name for dest_name in d if isinstance(d[dest_name], dict)]
+    others = {key: value for key, value in d.items() if key not in dest_names}
+    Config.SYSLOG_AGENT = SyslogAgentConfig.from_dict(others)
+    Config.SYSLOG_AGENT.destinations = [SyslogAgentDestination.from_dict(d[dest_name]) for dest_name in dest_names]
+    Config.PIDS_DIRECTORY = Config.SYSLOG_AGENT.pids_directory
+    Config.HMAC_KEY = Config.SYSLOG_AGENT.HMAC_KEY
+    Config.UID = Config.SYSLOG_AGENT.UID
+    Config.GID = Config.SYSLOG_AGENT.GID
 
 def set_configuration(configuration_directory):
     """
