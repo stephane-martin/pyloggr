@@ -15,7 +15,6 @@ import uuid
 import threading
 import os
 from io import BytesIO
-from functools import partial
 
 import certifi
 import lz4
@@ -33,7 +32,7 @@ from pyloggr.syslog.udpserver import bind_udp_unix_socket, UDPServer, bind_udp_s
 from pyloggr.config import SyslogServerConfig
 
 
-def parse_bytes_stream(stream):
+def parse_relp_stream(stream):
     next_token = read_next_token_in_stream(stream)
     messages = []
     relp_id = None
@@ -47,10 +46,27 @@ def parse_bytes_stream(stream):
             _ = next_token.next()
             length = int(next_token.next())
             data = stream.read(length)
-            messages.append(data)
+            messages.append(data.strip(' \r\n'))
     except (ValueError, StopIteration):
-        raise ValueError("Invalid stream")
+        raise ValueError("Invalid RELP stream")
     return relp_id, messages
+
+
+def parse_tcp_stream(stream):
+    next_token = read_next_token_in_stream(stream)
+    messages = []
+    try:
+        while True:
+            try:
+                length = next_token.next()
+            except StopIteration:
+                break
+            length = int(length)
+            data = stream.read(length)
+            messages.append(data.strip(' \r\n'))
+    except (ValueError, StopIteration):
+        raise ValueError("Invalid TCP stream")
+    return messages
 
 
 def wrap_ssl_sock(sock, ssl_options):
@@ -291,6 +307,7 @@ class SyslogParameters(object):
         self.port_to_protocol = {}
         self.unix_socket_names = []
         self.port_to_ssl_config = {}
+        self.port_to_compress = {}
 
         for server in conf.values():
             assert(isinstance(server, SyslogServerConfig))
@@ -303,6 +320,8 @@ class SyslogParameters(object):
                     # we don't need to track UDP ports
                     if server.stype in ('relp', 'tcp'):
                         self.port_to_protocol[port] = server.stype
+                    if server.stype == 'tcp':
+                        self.port_to_compress[port] = server.compress
 
         self.ssl_ports = list(
             chain.from_iterable([server.ports for server in conf.values() if server.ssl is not None])
@@ -564,7 +583,29 @@ class BaseSyslogClientConnection(object):
                         self.disconnect()
                         break
                     syslog_msg = yield stream.read_bytes(msg_len)
-                self._process_event(syslog_msg.strip(b' \r\n'), 'tcp')
+
+                if self.syslog_parameters.port_to_compress[self.server_port]:
+                    try:
+                        buf = BytesIO(lz4.decompress(syslog_msg))
+                    except ValueError:
+                        logger.error("Syslog server: tcp server: can't decompress data")
+                        self.disconnect()
+                        break
+                    finally:
+                        del syslog_msg
+                    try:
+                        messages = parse_tcp_stream(buf)
+                    except ValueError:
+                        logger.error("Syslog server: tcp server: can't parse decompressed data")
+                        self.disconnect()
+                        break
+                    finally:
+                        buf.close()
+                        del buf
+                    [self._process_event(message, 'tcp') for message in messages]
+
+                else:
+                    self._process_event(syslog_msg.strip(' \r\n'), 'tcp')
 
         except StreamClosedError:
             logger.info(u"TCP stream was closed {}:{}".format(self.client_host, self.client_port))
@@ -605,7 +646,7 @@ class BaseSyslogClientConnection(object):
             finally:
                 del data
             try:
-                parsed_relp_id, messages = parse_bytes_stream(buf)
+                parsed_relp_id, messages = parse_relp_stream(buf)
             except ValueError:
                 # malformed stream
                 logger.error("Dropping compressed stream: invalid RELP data")

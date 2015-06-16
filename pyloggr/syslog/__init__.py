@@ -21,3 +21,5 @@ def client_factory(servr, port, protocol, use_ssl=False, verify_cert=True, hostn
     elif protocol == "tcp" or protocol == 'syslog':
         return SyslogClient(servr, port, use_ssl, verify_cert, hostname, ca_certs, client_key, client_cert, server_deadline)
 
+
+
