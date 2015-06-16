@@ -4,7 +4,7 @@
 History
 =======
 
-** 0.3 (2015-06-15) **
+**0.3 (2015-06-15)**
 
 * listen on UDP
 * LZ4 compression for RELP
