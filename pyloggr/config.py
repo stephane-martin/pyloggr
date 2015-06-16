@@ -279,15 +279,29 @@ class SyslogServerConfig(GenericConfig):
             self.socket_names = [abspath(expanduser(str(socket_names)))]
 
 
+class SyslogAgentDestination(GenericConfig):
+    def __init__(self, host, port, protocol="relp", frmt="RFC5424", tls=False, tls_hostname="",
+                 verify_server_cert=True, compress=False):
+        self.host = str(host)
+        self.port = int(port)
+        self.protocol = str(protocol).lower() if protocol else "relp"
+        self.frmt = str(frmt) if frmt else "RFC5424"
+        self.tls_hostname = str(tls_hostname) if tls_hostname else None
+
+        verify_server_cert = _make_bool(verify_server_cert)
+        compress = _make_bool(compress)
+        tls = _make_bool(tls)
+        self.tls = tls if tls is not None else False
+        self.verify_server_cert = verify_server_cert if verify_server_cert is not None else True
+        self.compress = compress if compress is not None else False
+
+
 class SyslogAgentConfig(GenericConfig):
     """
     Parameters for the syslog agent
     """
-    def __init__(self, host, port, tcp_ports=None, udp_ports=None, relp_ports=None, socket_names=None, pause=5,
-                 protocol="relp", frmt="RFC5424", tls=False, tls_hostname="", lmdb_db_name="~/lmdb/agent_queue",
-                 localhost_only=True, verify_server_cert=True, compress=False, server_deadline=120):
-        self.host = str(host)
-        self.port = int(port)
+    def __init__(self, destinations=None, tcp_ports=None, udp_ports=None, relp_ports=None, socket_names=None, pause=5,
+                 lmdb_db_name="~/lmdb/agent_queue", localhost_only=True, server_deadline=120):
 
         if not tcp_ports:
             self.tcp_ports = []
@@ -317,23 +331,13 @@ class SyslogAgentConfig(GenericConfig):
         else:
             self.socket_names = [abspath(expanduser(str(socket_names)))]
 
-        self.protocol = str(protocol).lower() if protocol else "relp"
-        self.frmt = str(frmt) if frmt else "RFC5424"
         self.lmdb_db_name = lmdb_db_name
         self.pause = int(pause) if pause else 5
-        self.tls_hostname = str(tls_hostname) if tls_hostname else None
         self.server_deadline = int(server_deadline) if server_deadline is not None else 120
 
-        tls = _make_bool(tls)
         localhost_only = _make_bool(localhost_only)
-        verify_server_cert = _make_bool(verify_server_cert)
-        compress = _make_bool(compress)
-
-        self.tls = tls if tls is not None else False
         self.localhost_only = localhost_only if localhost_only is not None else True
-        self.verify_server_cert = verify_server_cert if verify_server_cert is not None else True
-        self.compress = compress if compress is not None else False
-
+        self.destinations = destinations
 
 class HarvestDirectory(GenericConfig):
     """
@@ -454,7 +458,10 @@ class GlobalConfig(object):
     def _load_syslog_agent_conf(self):
         syslog_agent_conf_filename = join(self.CONFIG_DIR, 'syslog_agent.conf')
         d = _config_file_to_dict(syslog_agent_conf_filename)
-        self.SYSLOG_AGENT = SyslogAgentConfig.from_dict(d)
+        dest_names = [dest_name for dest_name in d if isinstance(d[dest_name], dict)]
+        others = {key: value for key, value in d.items() if key not in dest_names}
+        self.SYSLOG_AGENT = SyslogAgentConfig.from_dict(others)
+        self.SYSLOG_AGENT.destinations = [SyslogAgentDestination.from_dict(d[dest_name]) for dest_name in dest_names]
         self.SYSLOG_AGENT.lmdb_db_name = check_directory(self.SYSLOG_AGENT.lmdb_db_name, self.UID, self.GID)
 
     def _load_machines_conf(self):
