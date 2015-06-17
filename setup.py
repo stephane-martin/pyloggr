@@ -49,10 +49,11 @@ requirements = [
 extensions_with_problems = [
     'cryptography', 'pika', 'subprocess32', 'spooky_hash', 'watchdog', 'psutil', 'lockfile', 'cytoolz',
     'msgpack-python', 'lmdb', 'setproctitle', 'lz4'
-] if on_rtd else []
+]
 
-for ext in extensions_with_problems:
-    requirements.remove(ext)
+if on_rtd:
+    for ext in extensions_with_problems:
+        requirements.remove(ext)
 
 if platform.system().lower().strip() == 'linux' and not on_rtd:
     requirements.append('python-prctl')
