@@ -9,8 +9,14 @@ pyloggr.main package
 
 .. toctree::
 
-   pyloggr.main.syslog_server
-   pyloggr.main.event_parser
+   pyloggr.main.agent
+   pyloggr.main.collector
+   pyloggr.main.filter_machine
+   pyloggr.main.harvest
+   pyloggr.main.shipper2fs
    pyloggr.main.shipper2pgsql
+   pyloggr.main.shipper2syslog
+   pyloggr.main.syslog_server
+   pyloggr.main.web_frontend
 
 

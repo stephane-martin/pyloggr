@@ -6,7 +6,7 @@ from __future__ import absolute_import, division, print_function
 
 __author__ = 'stef'
 
-# todo: metrics
+# todo: useful metrics
 
 import logging
 
@@ -230,11 +230,11 @@ class RabbitMQStats(Observable):
     """
     Gather information from RabbitMQ management API
     """
-    queue_names = [machine.source.queue for machine in Config.MACHINES.values()]
-    queue_names.extend(shipper.source_queue for shipper in Config.SHIPPER2PGSQL.values())
 
     def __init__(self):
         Observable.__init__(self)
+        self.queue_names = [machine.source.queue for machine in Config.MACHINES.values()]
+        self.queue_names.extend(shipper.source_queue for shipper in Config.SHIPPER2PGSQL.values())
         self.queues = {name: {} for name in self.queue_names}
         self._updating = False
 
@@ -325,16 +325,27 @@ class WebServer(object):
 
     @coroutine
     def launch(self):
-        # at this point, redis has been initialized...
-        global syslog_servers, notifications_consumer
-        # ... so we can get information about syslog servers from redis
+        global syslog_servers, notifications_consumer, status, rabbitmq_stats, pgsql_stats, notifications_consumer
+        status = Status()
+        rabbitmq_stats = RabbitMQStats()
+        pgsql_stats = PgSQLStats()
+        notifications_consumer = NotificationsConsumer(
+            rabbitmq_config=RMQConfig(
+                host=Config.RABBITMQ.host,
+                port=Config.RABBITMQ.port,
+                user=Config.RABBITMQ.user,
+                password=Config.RABBITMQ.password,
+                vhost=Config.RABBITMQ.vhost,
+                exchange=Config.NOTIFICATIONS.exchange,
+                binding_key=Config.NOTIFICATIONS.binding_key
+            )
+        )
+
         syslog_servers = SyslogServers()
-        # ... and notifications (updates) from rabbitmq are sent to syslog_servers
         notifications_consumer.register(syslog_servers)
         IOLoop.instance().add_callback(self.get_rabbit_notifications)
 
         self.http_server.add_sockets(self.sockets)
-        # periodic updates of stats
         self.start_periodic()
 
     @coroutine
@@ -383,20 +394,8 @@ class WebServer(object):
         yield pgsql_stats.update()
         status.redis = True
 
-# todo: perform init in Webserver instead
-
-status = Status()
-rabbitmq_stats = RabbitMQStats()
-pgsql_stats = PgSQLStats()
+status = None
+rabbitmq_stats = None
+pgsql_stats = None
 syslog_servers = None
-notifications_consumer = NotificationsConsumer(
-    rabbitmq_config=RMQConfig(
-        host=Config.RABBITMQ.host,
-        port=Config.RABBITMQ.port,
-        user=Config.RABBITMQ.user,
-        password=Config.RABBITMQ.password,
-        vhost=Config.RABBITMQ.vhost,
-        exchange=Config.NOTIFICATIONS.exchange,
-        binding_key=Config.NOTIFICATIONS.binding_key
-    )
-)
+notifications_consumer = None

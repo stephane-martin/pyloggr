@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 """
-This module provides stuff to implement a the main syslog/RELP server with Tornado
+This module provides stuff to implement a UDP/TCP/unix socket syslog/RELP server with Tornado
 """
 
 __author__ = 'stef'

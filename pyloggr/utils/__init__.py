@@ -31,9 +31,10 @@ def sleep(duration, wake_event=None, threading_event=None):
 
     :param duration: sleep time in seconds
     :param wake_event: optional event to wake the sleeper
-    :param threading_event optional threading.Event to wake up the sleeper
+    :param threading_event: optional `threading.Event` to wake up the sleeper
     :type duration: int
-    :type wake_event: `toro.Event`
+    :type wake_event: toro.Event
+    :type threading_event: threading.Event
     :rtype: Future
     """
     f = Future()

@@ -482,10 +482,10 @@ class Event(object):
 
     def generate_hmac(self, verify_if_exists=True):
         """
+        generate_hmac(self, verify_if_exists=True)
         Generate a HMAC from the fields: severity, facility, app_name, source, message, timereported
 
-        :param verify_if_exists: if True and the event already has a HMAC, the existing HMAC will be verified instead of
-        generating a new HMAC
+        :param verify_if_exists: verify event HMAC if it has one
         :type verify_if_exists: bool
         :return: a base 64 encoded HMAC
         :rtype: str

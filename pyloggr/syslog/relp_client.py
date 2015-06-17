@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 """
-RELP client
+RELP syslog client
 """
 
 from __future__ import absolute_import, division, print_function
@@ -64,7 +64,8 @@ class RELPClient(GenericClient):
         start()
         Connect to the RELP server and send 'open' command
 
-        :raises socket.error: if TCP connection fails
+        :raises `socket.error`: if TCP connection fails
+
         Note
         ====
         Tornado coroutine

@@ -21,9 +21,9 @@ class _Mock(MagicMock):
 
 MOCK_MODULES = [
     'enum', 'pyev', 'pika', 'pika.adapters', 'pika.exceptions', 'pika.adapters.tornado_connection', 'cryptography',
-    'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives',
-    'cryptography.exceptions', 'subprocess32', 'spooky_hash', 'psutil', 'watchdog', 'PyYAML',
-    'lockfile', 'cytoolz', 'msgpack-python', 'lmdb', 'setproctitle', 'lz4'
+    'cryptography.hazmat', 'cryptography.hazmat.backends', 'cryptography.hazmat.primitives', 'watchdog.observers',
+    'cryptography.exceptions', 'subprocess32', 'spooky_hash', 'psutil', 'watchdog', 'PyYAML', 'watchdog.events',
+    'lockfile', 'cytoolz', 'msgpack-python', 'lmdb', 'setproctitle', 'lz4', 'cytoolz.itertoolz'
 ]
 sys.modules.update((mod_name, _Mock()) for mod_name in MOCK_MODULES)
 

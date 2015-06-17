@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 """
-Base class for syslog clients
+Base class for syslog TCP and RELP clients
 """
 
 from __future__ import absolute_import, division, print_function

@@ -14,24 +14,45 @@ Components can be started/stopped using the `pyloggr_ctl` script.
 .. graphviz::
 
    digraph foo {
-      "syslog_server" [shape=box];
       "RabbitMQ" [style=filled];
       "PostgreSQL" [style=filled];
-      "Redis" [style=filled];
-      "parser" [shape=box];
-      "shipper2pgsql" [shape=box];
+      "LMDB" [style=filled,color=orange];
+      "Filesystem" [style=filled];
+      "Ext syslog server" [style=filled];
+      "Elasticsearch" [style=filled];
+      "syslog_server" [shape=box,style=filled,color=lightblue];
+      "filter_machine" [shape=polygon,sides=4,skew=.2,style=filled,color=yellow];
+      "pyloggr agents" [shape=box];
+      "web_frontend" [shape=box];
+      "TCP/syslog clients" [style=filled];
+      "RELP clients" [style=filled];
+
+      "shipper2pgsql" [shape=box,color=lightgreen,style=filled];
+      "shipper2fs" [shape=box,color=lightgreen,style=filled];
+      "shipper2syslog" [shape=box,color=lightgreen,style=filled];
+      "shipper2elasticsearch" [shape=box,color=lightgreen,style=filled];
+
       "harvest" [shape=box];
-      "collector" [shape=box];
-      "syslog clients" -> "syslog_server" [style=bold,color=blue];
+      "collector" [shape=box,color=orange,style=filled];
+
+      "pyloggr agents" -> "syslog_server" [style=bold,color=blue];
+      "TCP/syslog clients" -> "syslog_server" [style=bold,color=blue];
+      "RELP clients" -> "syslog_server" [style=bold,color=blue];
       "syslog_server" -> "RabbitMQ" [style=bold,color=blue];
-      "syslog_server" -> "Redis" [style=dotted,color=red];
-      "Redis" -> "collector"  [style=dotted,color=red];
+      "syslog_server" -> "LMDB" [style=dotted,color=red];
+      "LMDB" -> "collector"  [style=dotted,color=red];
       "collector" -> "RabbitMQ"  [style=dotted,color=red];
-      "parser" -> "RabbitMQ" [style=bold,color=blue];
-      "RabbitMQ" -> "parser" [style=bold,color=blue];
+      "filter_machine" -> "RabbitMQ" [style=bold,color=blue];
+      "RabbitMQ" -> "filter_machine" [style=bold,color=blue];
       "RabbitMQ" -> "shipper2pgsql" [style=bold,color=blue];
+      "RabbitMQ" -> "shipper2fs" [style=bold,color=blue];
+      "RabbitMQ" -> "shipper2syslog" [style=bold,color=blue];
+      "RabbitMQ" -> "shipper2elasticsearch" [style=bold,color=blue];
       "harvest" -> "RabbitMQ";
       "shipper2pgsql" -> "PostgreSQL" [style=bold,color=blue];
+      "shipper2fs" -> "Filesystem" [style=bold,color=blue];
+      "shipper2syslog" -> "Ext syslog server" [style=bold,color=blue];
+      "shipper2elasticsearch" -> "Elasticsearch" [style=bold,color=blue];
    }
 
 

@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 """
-The pyloggr.syslog subpackage provides syslog client and syslog server code.
+The pyloggr.syslog subpackage provides syslog client and syslog server implementations
 
 ------------------------
 """

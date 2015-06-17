@@ -21,8 +21,7 @@ define(
             "</div>";
     }
 
-
-    var ws = new WebSocket("ws://127.0.0.1:8888/syslog/websocket/");
+    var ws = new WebSocket("ws://" + location.hostname + ":" + location.port + "/syslog/websocket/");
     ws.onopen = function() {
         ws.send("getStatus");
     };
