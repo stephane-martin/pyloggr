@@ -302,7 +302,8 @@ class SyslogAgentConfig(GenericConfig):
     """
     def __init__(self, UID=None, GID=None, destinations=None, tcp_ports=None, udp_ports=None, relp_ports=None, pause=5,
                  lmdb_db_name="~/lmdb/agent_queue", localhost_only=True, server_deadline=120, socket_names=None,
-                 pids_directory="~/pids", logs_directory="~/logs", HMAC_KEY=None, logs_level="DEBUG"):
+                 pids_directory="~/pids", logs_directory="~/logs", HMAC_KEY=None, logs_level="DEBUG",
+                 milter_port=None):
 
         self.UID = getpwnam(str(UID)).pw_uid if UID else None
         self.GID = getgrnam(str(GID)).gr_gid if GID else None
@@ -336,6 +337,8 @@ class SyslogAgentConfig(GenericConfig):
             self.relp_ports = [int(p) for p in relp_ports]
         else:
             self.relp_ports = [int(relp_ports)]
+
+        self.milter_port = int(milter_port) if milter_port is not None else None
 
         if not socket_names:
             self.socket_names = []
