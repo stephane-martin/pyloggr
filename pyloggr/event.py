@@ -394,7 +394,7 @@ class Event(object):
         """
         if self._dirty:
             self.generate_uuid()
-            if self._hmac:
+            if self.structured_data[PYLOGGR_SDID]['hmac']:
                 self.generate_hmac(verify_if_exists=False)
 
     @property
