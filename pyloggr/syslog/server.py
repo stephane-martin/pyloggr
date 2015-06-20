@@ -466,7 +466,6 @@ class BaseSyslogClientConnection(object):
         ====
         Tornado coroutine
 
-
         From http://www.rsyslog.com/doc/relp.html::
 
             Request:
@@ -684,7 +683,7 @@ class BaseSyslogClientConnection(object):
             else:
                 raise ValueError
 
-        except StreamClosedError:
+        except (StreamClosedError, socket.error):
             logger.info("The client went away before it could be dispatched")
             self.disconnect()
             raise
