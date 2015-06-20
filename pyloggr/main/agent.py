@@ -28,6 +28,7 @@ from pyloggr.utils.lmdb_wrapper import LmdbWrapper
 from pyloggr.utils import sleep
 from pyloggr.utils.simple_queue import ThreadSafeQueue
 from pyloggr.syslog.relp_client import ServerClose
+from pyloggr.syslog.milter import MilterClient, Milter2Syslog
 from pyloggr.syslog import client_factory
 from pyloggr.syslog.server import BaseSyslogServer, SyslogParameters, BaseSyslogClientConnection
 from pyloggr.config import SyslogServerConfig, SyslogAgentConfig, SyslogAgentDestination
@@ -73,6 +74,14 @@ class SyslogAgent(BaseSyslogServer):
                 name="sockets",
                 socket_names=syslog_agent_config.socket_names,
                 stype="unix"
+            )
+
+        if syslog_agent_config.milter_port:
+            syslog_conf['milter_tcp_server'] = SyslogServerConfig(
+                name="milter_tcp_server",
+                ports=[syslog_agent_config.milter_port],
+                stype="tcp",
+                localhost_only=syslog_agent_config.localhost_only
             )
         syslog_parameters = SyslogParameters(syslog_conf)
         self.syslog_agent_config = syslog_agent_config
@@ -252,12 +261,27 @@ class SyslogAgent(BaseSyslogServer):
         """
         Handle TCP and RELP clients
         """
-        connection = SyslogAgentClient(
-            stream=stream,
-            address=address,
-            syslog_parameters=self.syslog_parameters,
-            received_messages=self.received_messages_queue
-        )
+        server_sockname = stream.socket.getsockname()
+        server_port = int(server_sockname[1])
+        client_host = stream.socket.getpeername()[0]
+        logger = logging.getLogger(__name__)
+
+        if self.syslog_agent_config.milter_port is not None and server_port == self.syslog_agent_config.milter_port:
+            logger.info("Milter connection from '%s'", client_host)
+            connection = MilterClient(
+                stream=stream,
+                address=address,
+                milter_class=Milter2Syslog,
+                context=(self.received_messages_queue, client_host)
+            )
+        else:
+            logger.info("Syslog connection from '%s'", client_host)
+            connection = SyslogAgentClient(
+                stream=stream,
+                address=address,
+                syslog_parameters=self.syslog_parameters,
+                received_messages=self.received_messages_queue
+            )
         yield connection.on_connect()
 
 

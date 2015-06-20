@@ -1,7 +1,9 @@
 # encoding: utf-8
 
 """
-Milter example with tornado framework (http://www.tornadoweb.org/)
+Sendmail milter server
+
+Listen for connections from sendmail/postfix to gather information about incoming emails
 """
 
 from __future__ import absolute_import, division, print_function
