@@ -15,6 +15,7 @@ from email.header import Header, decode_header, make_header
 
 # noinspection PyUnresolvedReferences,PyCompatibility
 from concurrent.futures import ThreadPoolExecutor
+import six
 from tornado.gen import coroutine
 from tornado.iostream import StreamClosedError
 from tornado.ioloop import IOLoop
@@ -38,7 +39,11 @@ def parse_email(headers, body, event, queue):
         for part in mail.walk():
             filename = part.get_filename("")
             if filename:
-                filename = unicode(make_header(decode_header(filename)))
+                if six.PY2:
+                    # noinspection PyCompatibility
+                    filename = unicode(make_header(decode_header(filename)))
+                else:
+                    filename = str(make_header(decode_header(filename)))
                 content_type = part.get_content_type()
                 event['attachments'].add(content_type + ' ' + filename)
     finally:
@@ -183,8 +188,12 @@ class Milter2Syslog(MilterBase):
     def on_header(self, cmd, key, val):
         self.init_event()
         header = make_header(decode_header(val))
-        unicode_header = unicode(header)
-        self.headers += key + ": " + str(header) + "\n"
+        if six.PY2:
+            # noinspection PyCompatibility
+            unicode_header = unicode(header)
+        else:
+            unicode_header = str(header)
+        self.headers += key + ": " + header.encode() + "\n"
         key = key.lower().replace('-', '_').strip(" \r\n")
         self.event['milter.header.' + key].add(unicode_header)
         if key == "subject":
